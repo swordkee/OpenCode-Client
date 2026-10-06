@@ -914,10 +914,13 @@ test("右键菜单的每个 data-action 都有对应处理分支", () => {
     );
 });
 
-test("导入是全局动作，对 project 类型也可见", () => {
-    const idx = treeSrc.indexOf("type === 'project'");
-    const after = treeSrc.slice(idx, idx + 200);
-    assert.ok(after.includes("import"), "project 右键也应显示导入项");
+test("导入是全局动作，对目录类型也可见", () => {
+    // 树已从三级（project → directory → session）改为两级（directory → session），
+    // 导入入口随之挂在目录行上。断言跟着节点类型走，别锁死在已移除的 project 上。
+    const idx = treeSrc.indexOf("type === 'dir'");
+    assert.ok(idx > 0, "树中应存在目录类型分支");
+    const after = treeSrc.slice(idx, idx + 300);
+    assert.ok(after.includes("import"), "目录右键也应显示导入项");
 });
 
 test("导入走 App 方法而非裸路径", () => {

@@ -62,10 +62,10 @@ test("toModelOptions 生成 value=provider/model 与 label", () => {
     });
     assert.equal(list.length, 2);
     assert.equal(list[0].value, "openai/gpt-x");
-    assert.equal(list[0].label, "GPT X");
+    assert.equal(list[0].label, "openai/GPT X");
     assert.deepEqual(list[0].variants, ["high"]);
     assert.deepEqual(list[1].variants, []);
-    assert.equal(list[1].label, "m", "name 缺失时回退 modelID");
+    assert.equal(list[1].label, "p/m", "name 缺失时回退 modelID，供应商前缀不变");
 });
 
 test("toModelOptions 容忍裸数组，并剔除无法表达为 provider/model 的条目", () => {
