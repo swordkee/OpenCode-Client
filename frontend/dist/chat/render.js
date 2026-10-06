@@ -11,6 +11,9 @@
 
 import { store } from '../core/state.js';
 import { escapeHtml, getActiveMessagesEl, showToast, safeText, extractPartText, isInternalUserMessage, normalizeMessageItem, setUpdateModelInfoHandler, modelDisplayLabel, resolveKnownValue } from '../core/utils.js';
+// isInternalInstructionMessage：识别服务端注入的内部指令/合成消息（如 "Instructions updated:" 的
+// Code Mode 目录），只在渲染层跳过（数据仍保留在缓存），判定依据见 v2compat.js 的函数注释。
+import { isInternalInstructionMessage } from '../core/v2compat.js';
 import { api } from '../core/apicall.js';
 import { updateUserNav } from './search.js';
 
@@ -128,7 +131,9 @@ setInterval(refreshLiveToolDurations, 200);
 export function buildMessageNode(item) {
     const info = item.info || item;
     const role = info.role || info.author || 'message';
-    const displayRole = role === 'user' ? '用户' : (role === 'assistant' ? '助手' : role);
+    const displayRole = role === 'user' ? '用户'
+        : (role === 'assistant' ? '助手'
+            : (role === 'system' ? '系统' : role));
     const parts = item.parts || [];
     const node = document.createElement('div');
     node.className = `oc-message ${role}`;
@@ -138,7 +143,11 @@ export function buildMessageNode(item) {
     body.className = 'oc-message-parts';
     // 渲染前按 part 自身顺序修正：不依赖 SSE 事件到达顺序（Web 端可能乱序）
     const partList = sortParts(Array.isArray(parts) ? parts : [parts]);
-    const messageErrorText = info.error?.message || info.error?.data?.message || '';
+    // 兼容两种 error 形态：v2 适配层把消息 error 规范为字符串（errorText），
+    // 而旧数据可能是 {message} 对象——字符串必须能读出，否则服务端已记录的错误不可见。
+    const messageErrorText = typeof info.error === 'string'
+        ? info.error
+        : (info.error?.message || info.error?.data?.message || '');
     if (role === 'assistant' && messageErrorText) {
         const errEl = document.createElement('div');
         errEl.className = 'oc-part error-msg';
@@ -186,13 +195,42 @@ export function buildMessageNode(item) {
             node.appendChild(metaEl);
         }
     }
-    // 消息时间：user / assistant 都显示在卡片底部（右下角）
+    // 消息时间：user / assistant 都显示在卡片底部（右下角）；
+    // 助手消息的 token 统计放在**时间行左侧**（v2 历史消息没有步骤行，不做合成）。
     const msgTime = formatStepTime(info.time?.created || info.time?.updated || info.createdAt);
-    if (msgTime && (role === 'user' || role === 'assistant')) {
-        const timeEl = document.createElement('div');
-        timeEl.className = 'oc-message-time';
-        timeEl.textContent = '⏱ ' + msgTime;
-        node.appendChild(timeEl);
+    var usageText = '';
+    if (role === 'assistant' && info.tokens) {
+        var tk2 = info.tokens || {};
+        var cacheRead = Number(tk2.cache && tk2.cache.read) || 0;
+        // v2 的 input 只计"未命中缓存"的部分，cache.read 才是命中部分；
+        // 两者相加才是这次请求真实的输入规模。否则同一会话里数字会因缓存命中与否忽大忽小。
+        var inTok2 = (Number(tk2.input) || 0) + cacheRead;
+        var outTok2 = Number(tk2.output) || 0;
+        var totalTok2 = inTok2 + outTok2 + (Number(tk2.reasoning) || 0);
+        if (totalTok2 > 0) {
+            usageText = '输入:' + formatNumber(inTok2)
+                + (cacheRead > 0 ? '(缓存 ' + formatNumber(cacheRead) + ')' : '')
+                + ' 输出:' + formatNumber(outTok2)
+                + ' 统计:' + formatNumber(totalTok2) + ' tokens';
+        }
+    }
+    if ((msgTime || usageText) && (role === 'user' || role === 'assistant')) {
+        // 同一行：token 统计靠左、时间靠右（由 CSS 的 space-between 实现）
+        const footerEl = document.createElement('div');
+        footerEl.className = 'oc-message-footer';
+        if (usageText) {
+            const usageEl = document.createElement('span');
+            usageEl.className = 'oc-message-usage';
+            usageEl.textContent = usageText;
+            footerEl.appendChild(usageEl);
+        }
+        if (msgTime) {
+            const timeEl = document.createElement('span');
+            timeEl.className = 'oc-message-time';
+            timeEl.textContent = '⏱ ' + msgTime;
+            footerEl.appendChild(timeEl);
+        }
+        node.appendChild(footerEl);
     }
     return node;
 }
@@ -203,7 +241,11 @@ export function buildMessageNode(item) {
  */
 export function renderMessages(items, targetBox) {
     const box = targetBox || getActiveMessagesEl();
-    const sourceList = (items || []).map(normalizeMessageItem).filter(item => !isInternalUserMessage(item));
+    const sourceList = (items || []).map(normalizeMessageItem)
+        .filter(item => !isInternalUserMessage(item))
+        // 内部指令/合成消息：只在渲染层跳过（原始数据保留在缓存/接口，便于排查），
+        // 判定条件见 v2compat.js 的 isInternalInstructionMessage 注释。
+        .filter(item => !isInternalInstructionMessage(item));
     const list = sourceList; // 分页加载：已加载消息全量渲染（不再本地截断）
 
     if (store.userScrolling) {
@@ -213,7 +255,13 @@ export function renderMessages(items, targetBox) {
 
     const scrollState = captureScrollState(box);
     if (!list.length) {
-        box.innerHTML = '<div class="oc-empty">该会话暂无消息</div>';
+        // 空列表也要给「执行失败」留宿主：若该会话有 sessionErrors（如 execution.failed
+        // 早于任何 step、服务端未落 assistant 卡片），先渲染错误行，再回退空态提示。
+        box.innerHTML = '';
+        appendSessionErrorRowIfNeeded(box, list);
+        if (!box.childElementCount) {
+            box.innerHTML = '<div class="oc-empty">该会话暂无消息</div>';
+        }
         store.lastMessageCount = 0;
         store.lastSourceMessageCount = 0;
         doUpdateModelInfo(null);
@@ -263,6 +311,8 @@ export function renderMessages(items, targetBox) {
     list.forEach(item => {
         box.appendChild(buildMessageNode(item));
     });
+    // 执行失败的兜底错误行（详见 appendSessionErrorRowIfNeeded 注释）
+    appendSessionErrorRowIfNeeded(box, list);
 
     doUpdateModelInfo(items);
     restoreScroll(box, scrollState, false);
@@ -272,10 +322,42 @@ export function renderMessages(items, targetBox) {
 
 }
 
+/**
+ * 会话执行失败的兜底错误行。
+ *
+ * 背景：session.error（execution.failed / step.failed 等）会写入 store.sessionErrors；
+ * 若服务端尚未落 assistant 卡片（失败早于任何 step），消息列表末尾就是用户消息，
+ * 错误在消息区没有宿主——buildMessageNode 的 sessionErrors 分支只在「已有 assistant
+ * 空卡片」时才生效。这里在列表末尾追加一条错误行，保证失败在消息区可见。
+ * 列表末尾是 assistant 卡片时跳过（错误由卡片自身分支展示，避免重复）。
+ */
+function appendSessionErrorRowIfNeeded(box, list) {
+    const sid = (box && box.dataset && box.dataset.tab) || store.currentSessionId;
+    if (!sid || !hasSessionError(sid)) return;
+    const last = list && list.length ? list[list.length - 1] : null;
+    const lastRole = last ? ((last.info || last).role || '') : '';
+    if (lastRole === 'assistant') return;
+    const node = document.createElement('div');
+    node.className = 'oc-message assistant';
+    const body = document.createElement('div');
+    body.className = 'oc-message-parts';
+    const errEl = document.createElement('div');
+    errEl.className = 'oc-part error-msg';
+    errEl.textContent = '模型调用失败：' + (store.sessionErrors[sid] || '未知错误，请检查 opencode 提供商配置');
+    body.appendChild(errEl);
+    node.appendChild(body);
+    box.appendChild(node);
+}
+
 
 /** 从消息历史中同步最新 assistant 使用的 Agent/Model 到下拉框。
  *  原为 export，现改内部实现并由 core/utils.js 的 setUpdateModelInfoHandler 注册暴露，
- *  service.js / tree.js 从 core 层调用（打破 service/tree ↔ render 循环依赖）。 */
+ *  service.js / tree.js 从 core 层调用（打破 service/tree ↔ render 循环依赖）。
+ *
+ *  覆盖规则（真机 bug 修复）：
+ *  - 用户在**本会话**内手动选择过的项（store.manualSelectionBySession[sessionID]）
+ *    绝不被历史覆盖——包括「切走再切回 / 点击已打开会话」触发的重新同步；
+ *  - 未手动选择过的项，按该会话历史同步一次（agentModelSyncedSession 守卫防重复）。 */
 function doUpdateModelInfo(items) {
     const agentSel = document.getElementById('ocAgentSelect');
     const modelSel = document.getElementById('ocModelSelect');
@@ -302,6 +384,13 @@ function doUpdateModelInfo(items) {
     // 历史里没有可用信息：保持现状，等后续渲染再尝试同步
     if (!agent && !model) return;
 
+    // 该会话的手动选择标记：被标记的项不允许被历史覆盖
+    // （切换会话时由 restoreSessionSelection 决定是否带上标记；无标记项照常同步）
+    const manual = sessionID ? ((store.manualSelectionBySession || {})[sessionID] || null) : null;
+    const isManual = function (kind) {
+        return !!(manual && Object.prototype.hasOwnProperty.call(manual, kind));
+    };
+
     // API 列表未加载时无法校验，退化为沿用历史值（保留原「API 加载失败时降级」语义）
     const agentApiLoaded = (store.agentList || []).length > 0;
     const modelApiLoaded = (store.modelList || []).length > 0;
@@ -310,17 +399,26 @@ function doUpdateModelInfo(items) {
 
     // DOM 与 store 同时更新：校验不通过时回退「默认」（空串），绝不让失效名进入请求
     if (agent) {
-        if (nextAgent) ensureSelectOption(agentSel, nextAgent, nextAgent);
-        agentSel.value = nextAgent;
-        store.selectedAgent = nextAgent;
+        if (isManual('agent')) {
+            // 手选优先：不覆盖，仅把下拉对齐回手动值（防重建后显示漂移）
+            agentSel.value = store.selectedAgent || '';
+        } else {
+            if (nextAgent) ensureSelectOption(agentSel, nextAgent, nextAgent);
+            agentSel.value = nextAgent;
+            store.selectedAgent = nextAgent;
+        }
     }
     if (model) {
-        if (nextModel) ensureSelectOption(modelSel, nextModel, nextModel);
-        modelSel.value = nextModel;
-        store.selectedModel = nextModel;
+        if (isManual('model')) {
+            modelSel.value = store.selectedModel || '';
+        } else {
+            if (nextModel) ensureSelectOption(modelSel, nextModel, nextModel);
+            modelSel.value = nextModel;
+            store.selectedModel = nextModel;
+        }
     }
     const variantSel = document.getElementById('ocVariantSelect');
-    if (variant && variantSel) {
+    if (variant && variantSel && !isManual('variant')) {
         variantSel.value = variant;
         // 与 agent / model 同理：variant 选项是 index.html 静态定义的，若历史值与之不匹配，
         // 浏览器会把 select.value 置为空串；此处同步回 store，避免「显示 ≠ 发送」。
@@ -330,9 +428,9 @@ function doUpdateModelInfo(items) {
     if (sessionID) store.agentModelSyncedSession = sessionID;
 }
 
-/** 取 agent 候选项的匹配键（/agent 返回对象的 name 字段） */
+/** 取 agent 候选项的匹配键（以 /agent 返回对象的 **id** 为准，缺 id 才退回 name） */
 function agentValueOf(item) {
-    return item && item.name;
+    return item && (item.id || item.name);
 }
 
 /** 取 model 候选项的匹配键（/provider 展开后的 value，形如 providerID/modelID） */
@@ -441,7 +539,12 @@ export function hasSessionError(id) {
 export function getSessionPendingText(id) {
     const status = store.sessionStatuses[id];
     if (status?.type === 'retry') {
-        return `模型连接失败，正在第 ${status.attempt || 1} 次重试：${status.message || '等待下一次重试'}`;
+        // retry 的 message 是服务端现成的可读文案；补 error 字段兜底
+        // （session.retry.scheduled 合成的事件只保证有 message，防御其它形态只给 error）。
+        const detail = status.message || (status.error
+            ? (typeof status.error === 'string' ? status.error : (status.error.message || ''))
+            : '');
+        return `模型连接失败，正在第 ${status.attempt || 1} 次重试：${detail || '等待下一次重试'}`;
     }
     return '正在等待模型回复...';
 }
@@ -745,20 +848,24 @@ export function renderQuestionTool(part) {
                 btn.className = 'oc-question-option-btn';
                 const label = (opt.label || '');
                 const desc = opt.description || '';
+                // v2 的选项是 {value,label,description}：**提交必须用 value**（label 仅供展示）。
+                // 老数据/工具形态可能只有 label，此时兜底用 label。
+                const optValue = String(opt.value !== undefined && opt.value !== null ? opt.value : label);
                 // 已选该选项时高亮
                 const answered = part.__pendingAnswers[qi];
-                if (answered && answered.indexOf(label) >= 0) btn.classList.add('selected');
+                if (answered && answered.indexOf(optValue) >= 0) btn.classList.add('selected');
                 let btnHtml = `<span class="oc-option-label">${escapeHtml(label)}</span>`;
                 if (desc) btnHtml += `<span class="oc-option-desc">${escapeHtml(desc)}</span>`;
                 btn.innerHTML = btnHtml;
                 // 点击只 toggle 选中状态，不提交、不关闭；直接更新当前 DOM
                 btn.addEventListener('click', () => {
-                    const isMulti = !!q.multiple;
+                    // 多选判据：v2 表单字段用 type === 'multiselect'（老数据可能是 multiple 布尔）
+                    const isMulti = !!(q.multiple || q.type === 'multiselect');
                     let cur = part.__pendingAnswers[qi] || [];
                     if (isMulti) {
-                        cur = cur.indexOf(label) >= 0 ? cur.filter(x => x !== label) : cur.concat([label]);
+                        cur = cur.indexOf(optValue) >= 0 ? cur.filter(x => x !== optValue) : cur.concat([optValue]);
                     } else {
-                        cur = [label];
+                        cur = [optValue];
                         // 单选：清除该问题其他选项的高亮
                         optsDiv.querySelectorAll('.oc-question-option-btn').forEach(function(b) {
                             b.classList.remove('selected');
@@ -766,7 +873,14 @@ export function renderQuestionTool(part) {
                     }
                     part.__pendingAnswers[qi] = cur;
                     // 当前按钮高亮
-                    btn.classList.toggle('selected', cur.indexOf(label) >= 0);
+                    btn.classList.toggle('selected', cur.indexOf(optValue) >= 0);
+                    // 与自定义输入互斥：点了选项就**清空该题的输入框**（但不置灰，用户仍可继续输入；
+                    // 一旦继续输入就会反过来取消选项高亮）——始终"最后动作生效"，所见即所交。
+                    part.__pendingCustom[qi] = '';
+                    const customEl = qBlock.querySelector('.oc-question-custom-input');
+                    if (customEl) customEl.value = '';
+                    // 选择即视为在作答：取消"跳过"标记，否则提交时会被跳过逻辑吞掉
+                    part.__pendingSkipped[qi] = false;
                     // 更新该问题"已答"提示
                     const answeredHint = qBlock.querySelector('.oc-question-answered-hint');
                     if (cur.length) {
@@ -803,6 +917,14 @@ export function renderQuestionTool(part) {
             customInput.value = part.__pendingCustom[qi] || '';
             customInput.addEventListener('input', () => {
                 part.__pendingCustom[qi] = customInput.value;
+                // 与选项互斥：一旦输入，就取消该题所有选项的高亮（最后动作生效）
+                if (customInput.value.trim()) {
+                    part.__pendingAnswers[qi] = [];
+                    qBlock.querySelectorAll('.oc-question-option-btn').forEach(function(b) {
+                        b.classList.remove('selected');
+                    });
+                    part.__pendingSkipped[qi] = false;
+                }
                 // 同步"已答"提示
                 const val = customInput.value.trim();
                 const answeredHint = qBlock.querySelector('.oc-question-answered-hint');

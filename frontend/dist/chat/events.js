@@ -7,10 +7,10 @@
 //       chat/sidepanel.js（scheduleSubtaskExtraction）、chat/tree.js（buildTree, wasSessionDeletedLocally）
 // ============================================================
 
-import { store } from '../core/state.js';
+import { store, currentDir } from '../core/state.js';
 import { api } from '../core/apicall.js';
 import { showToast, escapeHtml, getCachedMessages, safeText, isDesktopRuntime, loadWailsRuntime } from '../core/utils.js';
-import { loadMessages, refreshSessionTitle, selectSession } from './session.js';
+import { loadMessages, refreshSessionTitle, selectSession, loadAgentModelSelectors, notePromptActivity } from './session.js';
 import { updateSendButton } from './render.js';
 import { scheduleRenderCachedMessages, upsertMessage, upsertPart, applyPartDelta, removePart, removeMessage } from './cache.js';
 import { scheduleSubtaskExtraction } from './sidepanel.js';
@@ -32,6 +32,19 @@ let reconnectAttempts = 0;
 function dispatchV2Event(v2event) {
     const v1events = adaptEvent(v2event);
     for (const e of v1events) handleOcEvent(e);
+    // 任何模型/agent 活动都说明本次发送没有石沉大海：刷新无响应看门狗的基线
+    // （基线由 session.js 的发送流程维护，只认本次发送会话的事件，超时后才会提示）。
+    if (isPromptActivityEvent(v2event && v2event.type)) {
+        notePromptActivity(v2event && v2event.data && v2event.data.sessionID);
+    }
+}
+
+/** v2 事件是否代表「模型/agent 有活动」——用于取消发送后的无响应看门狗。
+ *  含 text/reasoning/tool/step/execution 全系与重试计划；
+ *  不含 inbox.enqueued（只证明服务端收下了消息，不证明模型可用）。 */
+function isPromptActivityEvent(type) {
+    if (type === 'session.inbox.delivered') return true;
+    return /^session\.(text|reasoning|tool|step|execution|retry|usage)\./.test(type || '');
 }
 
 /** 同类提示节流窗口（毫秒）：避免断开/重连提示在短时间内反复弹出刷屏 */
@@ -141,6 +154,18 @@ export function handleOcEvent(event) {
 
     if (type === 'server.connected' || type === 'server.heartbeat') return;
 
+    // 模型/供应商目录变化：官方客户端在收到这些事件时会「invalidate + 重新 sync」
+    // （见 opencode v2 源码 packages/client/src/solid/data.ts，model.updated / provider.updated /
+    //  credential.* / integration.updated 分支）。这里做同样的重拉——这是获取模型列表的
+    // 官方机制：初次拉取可能早于插件初始化完成（/api/model 官方描述即 "snapshot may precede
+    //  initial plugin settlement"），靠事件驱动补齐；重拉只更新、不清空已有列表。
+    if (type === 'model.updated' || type === 'provider.updated' ||
+        type === 'credential.updated' || type === 'credential.switched' ||
+        type === 'integration.updated') {
+        loadAgentModelSelectors(currentDir(), true);
+        return;
+    }
+
     if (type.includes('permission')) {
         if (type.includes('asked')) {
             // 权限请求（permission.asked / permission.v2.asked）：弹窗提供 允许一次 / 始终允许 / 拒绝
@@ -154,7 +179,12 @@ export function handleOcEvent(event) {
     }
 
     if (type === 'session.error' && sid && props.error) {
-        store.sessionErrors[sid] = typeof props.error === 'string' ? props.error : (props.error.message || safeText(props.error));
+        const message = typeof props.error === 'string' ? props.error : (props.error.message || safeText(props.error));
+        store.sessionErrors[sid] = message;
+        // 让失败立刻可见：消息区的错误卡片可能因「服务端尚未落 assistant 卡片」而没有宿主
+        // （例如 execution.failed 早于任何 step），且自动重试会连续触发失败事件。
+        // 用节流 toast 保证第一时刻有提示、又不刷屏；持久错误行由 render.js 兜底渲染。
+        showThrottledToast('session-error-' + sid, '执行失败: ' + String(message).replace(/\s+/g, ' ').slice(0, 200), 'error');
         if (sid === store.currentSessionId) loadMessages();
         return;
     }
@@ -225,7 +255,10 @@ export function handleOcEvent(event) {
     }
 
     const isCurrentSession = sid && sid === store.currentSessionId;
-    if (type === 'session.created' && isCurrentSession) {
+    if (type === 'session.created') {
+        // 新建会话必须刷新树：**不能**只在"它是当前会话"时才刷。
+        // 事件可能在 store.currentSessionId 赋值之前到达（新建流程存在竞态），
+        // 一旦被跳过，新建的会话就不会出现在项目树里。树重建很轻，无条件刷新即可。
         buildTree();
         return;
     }

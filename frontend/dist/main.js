@@ -9,7 +9,7 @@
 import { toggleTheme } from './core/theme.js';
 import { isBrowserRuntimeForMain, showToast, isDesktopRuntime, loadWailsRuntime } from './core/utils.js';
 import { api } from './core/apicall.js';
-import { store } from './core/state.js';
+import { store, currentDir } from './core/state.js';
 import { toModelOptions } from './core/v2compat.js';
 import {
     isMobileTreeMode, toggleMobileTree, closeMobileTree,
@@ -41,8 +41,7 @@ import {
     openFileBrowserModal,
 } from './filebrowser/browser.js';
 import {
-    showAddTypeModal, loadModelConfig, handleSchemeSwitch, handleSchemeImport,
-    handleSchemeExport, handleSchemeSave, handleSchemeApply,
+    showAddPresetModal, loadModelConfig, handleSlimSave, openSlimDir,
 } from './views/omo-config.js';
 import {
     loadSkillsData, renderSkillList, bindSkillManagerEvents,
@@ -86,10 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }, true);
 
     if (isBrowserRuntimeForMain()) {
-        var openSchemeBtn = document.getElementById('btnOpenSchemeDir');
-        if (openSchemeBtn) {
-            openSchemeBtn.style.display = 'none';
-        }
         var btnFrontendWebConfig = document.getElementById('btnFrontendWebConfig');
         if (btnFrontendWebConfig) {
             btnFrontendWebConfig.style.display = 'none';
@@ -320,6 +315,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // OMO 配置事件绑定
     // ========================
 
+    // 「📂 打开」：用系统文件管理器打开配置文件所在目录
+    document.getElementById('btnOpenSlimDir')?.addEventListener('click', openSlimDir);
+
     // 刷新模型列表
     document.getElementById('btnRefreshModels')?.addEventListener('click', async () => {
         const btn = document.getElementById('btnRefreshModels');
@@ -327,7 +325,9 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.textContent = '⏳ 刷新中...';
         try {
             // v2：模型列表走 /api/model（v2 的 /api/provider 不再内嵌 models），并归一化为 {value,label}
-            const newModels = toModelOptions(await api.OpenCodeCall('GET', '/api/model'));
+            // 需带当前目录（location[directory]），否则会回落到服务端 CWD=home
+            const dir = currentDir();
+            const newModels = dir ? toModelOptions(await api.OpenCodeCall('GET', '/api/model', null, dir)) : [];
             if (newModels.length) store.availableModels = newModels;
             await loadModelConfig();
             showToast(`获取到 ${store.availableModels.length} 个可用模型`, 'success');
@@ -338,59 +338,13 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.textContent = '🔄 刷新';
     });
 
-    document.getElementById('btnAddModelType').addEventListener('click', showAddTypeModal);
+    // 「➕ 新增方案」：打开模态（方案名 + 可选「继承自」）
+    document.getElementById('btnAddModelType').addEventListener('click', showAddPresetModal);
 
-    // ========================
-    // 方案管理事件绑定
-    // ========================
-
-    // 方案下拉框切换
-    document.getElementById('schemeSelect')?.addEventListener('change', async (e) => {
-        const name = e.target.value;
-        if (!name) return;
-        if (typeof handleSchemeSwitch === 'function') {
-            await handleSchemeSwitch(name);
-        }
-    });
-
-    // 导入方案
-    document.getElementById('btnSchemeImport')?.addEventListener('click', async () => {
-        if (typeof handleSchemeImport === 'function') {
-            await handleSchemeImport();
-        }
-    });
-
-    // 导出方案
-    document.getElementById('btnSchemeExport')?.addEventListener('click', async () => {
-        if (typeof handleSchemeExport === 'function') {
-            await handleSchemeExport();
-        }
-    });
-
-    // 入库（保存到方案目录）
-    document.getElementById('btnSchemeSave')?.addEventListener('click', async () => {
-        if (typeof handleSchemeSave === 'function') {
-            await handleSchemeSave();
-        }
-    });
-
-    // 打开方案目录
-    document.getElementById('btnOpenSchemeDir')?.addEventListener('click', async () => {
-        try {
-            await api.OpenSchemeDir();
-        } catch (e) {
-            showToast('打开方案目录失败: ' + (e.message || e), 'error');
-        }
-    });
-
-    // 保存 OMO 配置
+    // 保存 OMO（oh-my-opencode-slim）配置：方案、radio 启用项与模型变更在此统一提交
     document.getElementById('modelActions').addEventListener('click', async (e) => {
         if (e.target.id !== 'btnSaveModels') return;
-        if (typeof handleSchemeApply === 'function') {
-            await handleSchemeApply();
-        } else {
-            showToast('当前页面未加载 OMO 保存逻辑', 'error');
-        }
+        await handleSlimSave();
     });
 
     // ========================

@@ -1560,6 +1560,27 @@ input::placeholder, textarea::placeholder {
     opacity: 1;
 }
 
+/* ── 添加工作目录操作行：常驻树顶部（原挂在 global 项目行，项目层取消后独立成行） ── */
+.oc-tree-add-dir-row {
+    padding: 0 6px 6px;
+}
+.oc-tree-add-dir-row .oc-tree-add-dir {
+    display: block;
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px dashed rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+}
+.oc-tree-add-dir-row .oc-tree-add-dir:hover {
+    color: var(--text-secondary);
+    background: var(--bg-sidebar-hover);
+}
+
 /* ── 目录行：次级分组标题 + 会话计数徽章 ── */
 .oc-tree-dir-row {
     display: flex;
@@ -1900,6 +1921,15 @@ input::placeholder, textarea::placeholder {
     border: 1px solid var(--border);
     border-bottom-left-radius: var(--radius-xs);
 }
+/* 系统消息（压缩标记 / 技能激活 / 合成说明等）：与助手卡片完全一致（靠左）。
+   注意：.oc-message 基类本身没有背景与边框，若不单独给 system 定义，
+   它会显示成一行没有卡片的裸文本。 */
+.oc-message.system {
+    align-self: flex-start;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: var(--radius-xs);
+}
 .oc-message-role {
     font-size: 10px;
     color: var(--text-muted);
@@ -1917,8 +1947,26 @@ input::placeholder, textarea::placeholder {
 .oc-message-time {
     font-size: 10px;
     color: var(--text-muted);
-    text-align: right;
     margin-top: 4px;
+    text-align: right;
+    font-family: "SF Mono", "Cascadia Code", monospace;
+}
+/* 卡片底部一行：token 统计靠左、时间靠右（space-between）。
+   间距/字体对齐老项目：token 文字同 .oc-step-cost（等宽 10px），行间距同 .oc-step-divider 的 gap:12px */
+.oc-message-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 4px;
+}
+.oc-message-footer .oc-message-time { margin-top: 0; }
+.oc-message-footer .oc-message-usage { margin-top: 0; }
+/* 助手卡片的 token 统计：靠左；字体沿用老项目 .oc-step-cost 的等宽体 */
+.oc-message-usage {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: left;
     font-family: "SF Mono", "Cascadia Code", monospace;
 }
 .oc-message pre {
@@ -4903,7 +4951,8 @@ input::placeholder, textarea::placeholder {
     appearance: none;
 }
 .mod-chip:has(.mod-input:checked),
-.mod-chip:has(.mod-output:checked) {
+.mod-chip:has(.mod-output:checked),
+.mod-chip:has(.mod-tools:checked) {
     border: 1px solid var(--accent);
     padding: 2px 8px;
     color: var(--accent);
@@ -5162,6 +5211,17 @@ input::placeholder, textarea::placeholder {
 .btn-eye:hover {
     color: var(--accent);
     background: var(--bg-card-hover);
+}
+/* 网络配置：服务口令输入行（输入框 + 显示明文按钮，复用 .btn-eye） */
+.modal-field .pwd-row {
+    display: flex;
+    gap: 0;
+}
+.modal-field .pwd-row input {
+    flex: 1;
+    width: auto;
+    border-right: none;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 /* 添加卡片虚线占位 */
 .provider-card-add {
@@ -8412,4 +8472,83 @@ input.toolbar-input {
     .kb-field-grow { min-height: 120px; }
     /* 标签区独占一行，避免与分类下拉挤压 */
     .kb-meta-tags { flex-basis: 100%; }
+}
+
+/* ============================================================
+   OMO 配置（oh-my-opencode-slim 方案管理）— 视图专属样式
+   ------------------------------------------------------------
+   改造说明：本视图复用 .model-group / .model-row / .batch-* /
+   .btn* 等既有组件，仅补充少量「方案 radio 与继承标记」样式；
+   全部沿用现有 CSS 变量，克制、朴素，不引入新的视觉语言。
+   ============================================================ */
+/* 方案单选按钮（组头最左；radio 是唯一表达「启用」的元素） */
+#view-omo .preset-radio {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+}
+/* 方案名：默认中等字重；选中的方案加粗（唯一的高亮差异） */
+#view-omo .model-group-title .model-group-label {
+    flex: 0 0 auto;
+    font-weight: 500;
+}
+#view-omo .model-group.active .model-group-label {
+    font-weight: 600;
+}
+/* 灰色小字标记：「启用中」「继承自 X」「继承」「已覆盖」 */
+#view-omo .active-tag,
+#view-omo .inherit-note,
+#view-omo .inherit-tag {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+/* 行内「继承 / 已覆盖」标记紧跟 agent 名（收紧与名字的间距） */
+#view-omo .inherit-tag {
+    margin-left: -4px;
+}
+/* 继承异常警示（继承环 / 继承源缺失；此类方案禁止保存） */
+#view-omo .inherit-error {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--danger);
+    white-space: nowrap;
+}
+/* 纯继承行：左边缘一条浅灰竖线（padding 补偿 2px，保持内容对齐） */
+#view-omo .model-row.inherited {
+    border-left: 2px solid var(--border);
+    padding-left: 18px;
+}
+/* 组头「✎ 重命名方案」按钮（圆形中性色；不吃 .btn-add-entry 的 auto 外边距） */
+#view-omo .btn-rename-preset {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#view-omo .btn-rename-preset:hover {
+    background: var(--bg-card-hover);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+/* 顶部覆盖提示条：环境变量 / 项目级配置优先、本文件可能不生效时的提示 */
+#view-omo .slim-override-hint {
+    padding: 8px 12px;
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-sm);
+    background: var(--warning-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
 }

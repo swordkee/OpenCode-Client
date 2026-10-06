@@ -4,19 +4,19 @@
 //       chat/mobile.js（isMobileTreeMode）、chat/render.js（updateScrollBottomButton, updateSendButton）、
 //       chat/events.js（loadSessionStatuses）、chat/sidepanel.js（extractSubtaskSummaries, renderSubtaskPanel）、
 //       chat/search.js（resetUserNav, updateUserNav）
-//       filebrowser/browser.js（openFileBrowserModal）——尚未改造，保留全局守卫调用
+//       filebrowser/browser.js（openFileBrowserStandaloneFor）——保留全局守卫调用
 // 解环说明：本文件不得 import chat/session.js。原 activateTabContainer 中 loadMessages() 调用
 //           改为回调注入 tabActivationHandler，由 session.js 在模块加载时通过 setTabActivationHandler 注入。
 // ============================================================
 
 import { store } from '../core/state.js';
-import { escapeHtml, getTabMessagesEl, ensureTabMessagesEl, getCachedMessages, updateModelInfo } from '../core/utils.js';
+import { escapeHtml, getTabMessagesEl, ensureTabMessagesEl, getCachedMessages, updateModelInfo, restoreSessionSelection, refreshServiceStatus } from '../core/utils.js';
 import { isMobileTreeMode } from './mobile.js';
 import { updateScrollBottomButton, updateSendButton } from './render.js';
 import { loadSessionStatuses } from './events.js';
 import { extractSubtaskSummaries, renderSubtaskPanel } from './sidepanel.js';
 import { resetUserNav, updateUserNav } from './search.js';
-import { openFileBrowserModal, openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
+import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { updateTreeActiveSession } from '../core/utils.js';
 
 /**
@@ -135,12 +135,18 @@ export function switchTab(sessionID) {
     if (!sessionID) return;
     store.activeTabId = sessionID;
     store.currentSessionId = sessionID;
+    // 切到该会话目录：刷新服务状态面板的 MCP/插件（按 location[directory] 作用域）
+    refreshServiceStatus();
     activateTabContainer(sessionID);
     // 同步项目树高亮（树节点与当前 tab 一致）
     updateTreeActiveSession();
 
     // activateTabContainer 会触发加载，由 renderMessages → doUpdateModelInfo 完成同步。
+    // 切会话流程：先恢复该会话自己的选择上下文（有手动选择的会话恢复手选值；
+    // 无手动选择的会话清空，随后由本会话历史同步一次）。历史同步（doUpdateModelInfo）
+    // 不会覆盖 manualSelectionBySession 里已标记的项。
     store.agentModelSyncedSession = '';
+    restoreSessionSelection(sessionID);
     updateModelInfo(getCachedMessages(sessionID));
 
     // 标题、目录路径更新

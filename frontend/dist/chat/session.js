@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // chat-session.js — 会话管理与消息收发
 // 负责会话选择/创建/加载、Agent/Model 选择器、附件管理、消息发送、轮询与中止
 // 依赖：core/state.js、core/utils.js（showToast, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages）、
@@ -6,156 +6,193 @@
 //       chat/sidepanel.js（extractSubtaskSummaries, renderSubtaskPanel）、chat/events.js（loadSessionStatuses）、
 //       chat/render.js（isSessionBusy, smartScroll, updateSendButton, renderMessages）、chat/tree.js（rememberKnownDir）、
 //       chat/search.js（resetUserNav）、chat/cache.js（cacheMessages, ensurePendingAssistant, renderPendingAssistantPlaceholder, renderCachedMessages）
-//       filebrowser/browser.js（openFileBrowserModal）——尚未改造，保留全局守卫调用
+//       filebrowser/browser.js（openFileBrowserStandaloneFor）——保留全局守卫调用
 // 解环说明：updateSendButton 已移入 chat/render.js；pendingWorkDir 已移入 core/state.js 的 store；
 //           通过 setTabActivationHandler 向 tabs.js 注入会话激活加载回调，避免 tabs↔session 循环依赖。
 // ============================================================
 
 import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
-import { showToast, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, isKnownAgentName, isKnownModelId } from '../core/utils.js';
+import { showToast, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, isKnownAgentName, isKnownModelId, resolveKnownValue, markManualSelection, restoreSessionSelection, refreshServiceStatus, hasManualSessionSelection } from '../core/utils.js';
 import { isMobileTreeMode } from './mobile.js';
 import { openSessionTab, renderTabsBar, setTabActivationHandler } from './tabs.js';
 import { extractSubtaskSummaries, renderSubtaskPanel } from './sidepanel.js';
 import { loadSessionStatuses } from './events.js';
-import { isSessionBusy, smartScroll, updateSendButton, renderMessages } from './render.js';
+import { isSessionBusy, smartScroll, updateSendButton, renderMessages, ensureSelectOption } from './render.js';
+// 与 cmd-palette 互相 import（它在函数内调用本模块的 loadMessages 等）；
+// ESM 循环在"仅运行时调用"下是安全的：这里只在发送时调用 isKnownCommand。
+import { isKnownCommand, isKnownSkill } from './cmd-palette.js';
 import { rememberKnownDir } from './tree.js';
 import { resetUserNav, updateUserNav, shiftUserNavIndex } from './search.js';
 import { cacheMessages, ensurePendingAssistant, renderPendingAssistantPlaceholder, renderCachedMessages, cacheLocalUserMessage, removeLocalUserMessage, prependMessages } from './cache.js';
-import { openFileBrowserModal, openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
+import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 // 知识库 @ 引用：collectKnowledgeRefs 取引用全文注入发送 parts，clearKnowledgeRefs 在发送成功后清空引用区。
 // 该模块不识 session.js，无循环依赖。
 import { collectKnowledgeRefs, clearKnowledgeRefs, hasKnowledgeRefs } from './knowledge-ref.js';
 // OpenCode v2 适配层：拆 {data:...} 信封、把 v2 扁平消息还原为 v1 的 {info,parts}、转换 prompt 请求体。
-import { unwrap, unwrapList, toModelOptions, modelSelectorsUsable, MODEL_LIST_EMPTY_HINT, adaptMessages, prevCursor, toPromptBody, toModelRef, locationQuery } from '../core/v2compat.js';
+import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, locationQuery, formatApiError } from '../core/v2compat.js';
 
 // ============================
 // 全局 Agent/Model 选择器
 // ============================
 
-/** 加载 Agent/Model 下拉选择器（从 API 获取可用列表） */
-export async function loadAgentModelSelectors() {
-    if (store.agentModelSelectorsLoaded) return;
-    // 同一时刻只跑一次：checkWebStatus 与服务启动路径都可能触发
-    if (modelSelectorLoadInFlight) return modelSelectorLoadInFlight;
+// agent/model 冷启动重试：v2 的 /api/agent、/api/model 按 location **逐步就绪**——
+// 首次可能为空、或只返回「已加载完的部分供应商」，稍后才补齐（实测同一目录先 29 条、
+// 紧接着 0 条、随后又 29 条）。故不能把首次结果当成完整结果缓存。
+// 这里用「数量是否仍在增长」判断未就绪：为空或仍在增长就短延迟复查，稳定后停止。
+let agentModelRetryAttempt = 0;
+let agentModelRetryTimer = 0;
+let agentModelLastCounts = { agents: -1, models: -1 };
 
-    modelSelectorLoadInFlight = (async () => {
-        try {
-            // 不吞错：失败要能看见。原本写成 .catch(() => [])，于是服务未就绪时
-            // 拿到空数组、守卫照样置位，问题被永久掩盖且日志无痕。
-            const [agentsRes, modelsRes] = await Promise.all([
-                api.OpenCodeCall('GET', '/api/agent'),
-                api.OpenCodeCall('GET', '/api/model'),
-            ]);
-            store.agentList = unwrapList(agentsRes);
-            store.modelList = toModelOptions(modelsRes);
-        } catch (err) {
-            console.error('[模型列表] 加载失败，将重试', err);
-            store.agentList = [];
-            store.modelList = [];
-        }
-
-        const agentSel = document.getElementById('ocAgentSelect');
-        const modelSel = document.getElementById('ocModelSelect');
-        if (!agentSel || !modelSel) return;
-
-        // 填充 agent 下拉框
-        agentSel.innerHTML = '<option value="">默认</option>';
-        store.agentList.forEach(a => {
-            const opt = document.createElement('option');
-            opt.value = a.name;
-            opt.textContent = a.name;
-            if (a.description) opt.title = a.description;
-            agentSel.appendChild(opt);
-        });
-        agentSel.value = store.selectedAgent;
-
-        // 填充 model 下拉框（value 用真实模型 ID 供对话请求切分；文字显示 name）
-        modelSel.innerHTML = '<option value="">默认</option>';
-        store.modelList.forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.value;
-            opt.textContent = m.label;
-            modelSel.appendChild(opt);
-        });
-        // 空列表要**看得见**：否则用户只看到「默认」+ 会话历史兜底的那几项，
-        // 以为是自己选不了，而不是「列表没加载出来」。
-        if (store.modelList.length === 0) {
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.disabled = true;
-            opt.textContent = MODEL_LIST_EMPTY_HINT;
-            modelSel.appendChild(opt);
-        }
-        modelSel.value = store.selectedModel;
-
-        // change 事件（带绑定守卫：启停多次只绑一次，避免重复监听）
-        // 用户手动选择后立即标记「本会话已完成同步」，阻止后续重渲染用消息历史覆盖该选择
-        if (!agentSel.dataset.modelBound) {
-            agentSel.dataset.modelBound = '1';
-            agentSel.addEventListener('change', () => {
-                store.selectedAgent = agentSel.value;
-                store.agentModelSyncedSession = store.currentSessionId || '';
-            });
-        }
-        if (!modelSel.dataset.modelBound) {
-            modelSel.dataset.modelBound = '1';
-            modelSel.addEventListener('change', () => {
-                store.selectedModel = modelSel.value;
-                store.agentModelSyncedSession = store.currentSessionId || '';
-            });
-        }
-
-        // Variant 选择器
-        const variantSel = document.getElementById('ocVariantSelect');
-        if (variantSel) {
-            variantSel.value = store.selectedVariant;
-            if (!variantSel.dataset.modelBound) {
-                variantSel.dataset.modelBound = '1';
-                variantSel.addEventListener('change', () => {
-                    store.selectedVariant = variantSel.value;
-                });
-            }
-        }
-
-        // 只在真的拿到模型列表时才置「已加载」守卫。
-        // 空列表保持未加载 → 后续状态检查会重试；同时起有界自愈重试。
-        if (modelSelectorsUsable(store.modelList)) {
-            store.agentModelSelectorsLoaded = true;
-        } else {
-            scheduleModelSelectorRetry();
-        }
-    })().finally(() => {
-        modelSelectorLoadInFlight = null;
-    });
-
-    return modelSelectorLoadInFlight;
-}
-
-/** 模型列表加载的并发合并：checkWebStatus 与服务启动可能同时触发。 */
-let modelSelectorLoadInFlight = null;
-
-/** 空列表时的自愈重试：有界，避免服务真的不可用时无限打请求。 */
-const MODEL_SELECTOR_RETRY_MAX = 5;
-const MODEL_SELECTOR_RETRY_DELAY_MS = 2000;
-let modelSelectorRetries = 0;
-
-function scheduleModelSelectorRetry() {
-    if (modelSelectorRetries >= MODEL_SELECTOR_RETRY_MAX) {
-        console.warn('[模型列表] 重试已达上限，停止重试；停止/重启服务可重新加载');
+/** 加载 Agent/Model 下拉选择器（从 API 获取可用列表）
+ *  @param {string} dir  目录（v2 的 agent 列表按 location 取）
+ *  @param {boolean} [force] 为 true 时忽略「同目录已加载」守卫强制重拉
+ *         （用于 model.updated / provider.updated 等事件驱动的刷新） */
+export async function loadAgentModelSelectors(dir, force) {
+    const directory = (dir || '').trim();
+    // 无目录时不请求：v2 的 /api/agent、/api/model 需要 location[directory]，
+    // 缺省会退回服务端 CWD（共享服务为 home），把 home 误登记为项目。
+    // 同时**不得清空已有列表**：空目录调用（如无会话时的状态刷新）若清空，
+    // 会让用户手选的合法值在发送前的严格校验里被误判回退（真机 bug 的输入端成因）。
+    if (!directory) {
         return;
     }
-    modelSelectorRetries += 1;
-    setTimeout(() => {
-        // 期间用户可能已手动重启服务并加载成功，这里再确认一次
-        if (store.agentModelSelectorsLoaded) return;
-        loadAgentModelSelectors();
-    }, MODEL_SELECTOR_RETRY_DELAY_MS);
-}
+    // 目录变化：取消旧目录的重试定时器并复位计数，避免旧目录的延迟回调覆盖新目录数据
+    if (store.agentModelSelectorsDir && store.agentModelSelectorsDir !== directory) {
+        clearTimeout(agentModelRetryTimer);
+        agentModelRetryAttempt = 0;
+        agentModelLastCounts = { agents: -1, models: -1 };
+    }
+    // 同目录已加载则跳过；目录变了才重新拉取（v2 的 agent/model 是项目级配置）
+    // force=true 时忽略该守卫（事件驱动的强制刷新）
+    if (!force && store.agentModelSelectorsLoaded && store.agentModelSelectorsDir === directory) return;
+    try {
+        // v2：/api/agent、/api/model 返回 {location, data:[...]} 信封，需拆包。
+        // 注意模型列表必须用 /api/model——v2 的 /api/provider 不再内嵌 models 字段。
+        const [agentsRes, modelsRes] = await Promise.all([
+            api.OpenCodeCall('GET', '/api/agent', null, directory).catch((err) => {
+                console.error('[模型列表] /api/agent 请求失败（目录 ' + directory + '）', err);
+                return [];
+            }),
+            api.OpenCodeCall('GET', '/api/model', null, directory).catch((err) => {
+                console.error('[模型列表] /api/model 请求失败（目录 ' + directory + '）', err);
+                return [];
+            }),
+        ]);
+        const agents = unwrapList(agentsRes);
+        const models = toModelOptions(modelsRes);
+        // 空响应不得覆盖已有非空列表：v2 的 /api/agent、/api/model 是「逐步就绪」的，
+        // 实测存在「先 29 条 → 紧接着 0 条 → 随后又 29 条」的中间态；若把 0 条写回 store，
+        // 用户手选的合法值会在发送前的严格校验（isKnownAgentName/isKnownModelId）里被
+        // 误判回退，服务端转而用会话残留的旧 agent 执行（报 Agent not found）。
+        // 非空响应照常更新（数量收敛正常生效）；空响应仅在「本就没有数据」时保持为空。
+        if (agents.length || !store.agentList.length) store.agentList = agents;
+        if (models.length || !store.modelList.length) store.modelList = models;
+        store.agentModelSelectorsLoaded = true;
+        store.agentModelSelectorsDir = directory;
+        // 懒加载冷启动：为空、或数量相比上次仍在增长（说明其余供应商尚未就绪）时复查，
+        // 直到连续一轮不再增长（视为已齐全）或达到上限，避免下拉停在「部分模型」状态。
+        const grew = agents.length > agentModelLastCounts.agents || models.length > agentModelLastCounts.models;
+        const empty = !agents.length || !models.length;
+        agentModelLastCounts = { agents: agents.length, models: models.length };
+        if ((empty || grew) && agentModelRetryAttempt < 8) {
+            agentModelRetryAttempt++;
+            clearTimeout(agentModelRetryTimer);
+            agentModelRetryTimer = setTimeout(() => {
+                store.agentModelSelectorsLoaded = false; // 复位守卫，允许同目录重新拉取
+                loadAgentModelSelectors(directory);
+            }, 2500);
+        } else {
+            agentModelRetryAttempt = 0;
+        }
+    } catch (error) {
+        // 请求失败同样不得清空已有列表：保留上一次成功的数据（stale-while-revalidate），
+        // 下一轮刷新或事件驱动重拉时再校正；清空式失败处理会让手选值在发送前被误判回退。
+        // 但失败本身要留痕：否则「列表没加载出来」在日志里完全无迹可寻。
+        console.error('[模型列表] 加载异常（目录 ' + directory + '）', error);
+        if (!store.agentList.length) store.agentList = [];
+        if (!store.modelList.length) store.modelList = [];
+    }
 
-/** 服务重启后重置重试计数，使新一轮启动能重新自愈。 */
-export function resetModelSelectorRetries() {
-    modelSelectorRetries = 0;
+    const agentSel = document.getElementById('ocAgentSelect');
+    const modelSel = document.getElementById('ocModelSelect');
+    if (!agentSel || !modelSel) return;
+
+    // 填充 agent 下拉框
+    agentSel.innerHTML = '<option value="">默认</option>';
+    store.agentList.forEach(a => {
+        const opt = document.createElement('option');
+        // value 必须是 agent 的 **id**（如 build）：v2 服务端按 id 解析 agent，
+        // 传显示名（如 Build）会在**执行期**报 Agent not found（接口本身不校验）。
+        // text 仍是给人看的 name。
+        opt.value = a.id || a.name;
+        opt.textContent = a.name || a.id;
+        if (a.description) opt.title = a.description;
+        agentSel.appendChild(opt);
+    });
+    // 列表为空（数据不可用）而已有手选值时补齐选项：保证「显示 == 即将发送的值」，
+    // 不因列表抖动让用户以为选择被重置（发送端对无手选的历史值仍走保守回退）。
+    if (!store.agentList.length && store.selectedAgent) ensureSelectOption(agentSel, store.selectedAgent, store.selectedAgent);
+    agentSel.value = store.selectedAgent;
+
+    // 填充 model 下拉框（value 用真实模型 ID 供对话请求切分；文字显示 name）
+    modelSel.innerHTML = '<option value="">默认</option>';
+    store.modelList.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.value;
+        opt.textContent = m.label;
+        modelSel.appendChild(opt);
+    });
+    // 列表为空要**看得见**：上面的重试机制只保证「最终会补齐」，
+    // 不解决「此刻用户看不出来」——他只看到「默认」+ 手选/历史兜底的那几项，
+    // 会以为是「可选项就这么少 / 自己选不了」。禁用项，不可选中，只作说明。
+    if (!store.modelList.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.textContent = MODEL_LIST_EMPTY_HINT;
+        modelSel.appendChild(opt);
+    }
+    // 与 agent 同一口径：列表不可用时补齐手选的模型项
+    if (!store.modelList.length && store.selectedModel) ensureSelectOption(modelSel, store.selectedModel, store.selectedModel);
+    modelSel.value = store.selectedModel;
+
+    // change 事件（带绑定守卫：启停多次只绑一次，避免重复监听）
+    // 用户手动选择后立即标记「本会话已完成同步」，阻止后续重渲染用消息历史覆盖该选择；
+    // 同时写入 per-session 手动标记（manualSelectionBySession），使「切走再切回」
+    // 时历史同步也不得覆盖手选项（render.js doUpdateModelInfo / tabs.js switchTab 都会读它）。
+    if (!agentSel.dataset.modelBound) {
+        agentSel.dataset.modelBound = '1';
+        agentSel.addEventListener('change', () => {
+            store.selectedAgent = agentSel.value;
+            markManualSelection('agent', agentSel.value);
+            store.agentModelSyncedSession = store.currentSessionId || '';
+        });
+    }
+    if (!modelSel.dataset.modelBound) {
+        modelSel.dataset.modelBound = '1';
+        modelSel.addEventListener('change', () => {
+            store.selectedModel = modelSel.value;
+            markManualSelection('model', modelSel.value);
+            store.agentModelSyncedSession = store.currentSessionId || '';
+        });
+    }
+
+    // Variant 选择器
+    const variantSel = document.getElementById('ocVariantSelect');
+    if (variantSel) {
+        variantSel.value = store.selectedVariant;
+        if (!variantSel.dataset.modelBound) {
+            variantSel.dataset.modelBound = '1';
+            variantSel.addEventListener('change', () => {
+                store.selectedVariant = variantSel.value;
+                // variant 与 agent/model 同一口径：手动选择打会话级标记，历史同步不得覆盖
+                markManualSelection('variant', variantSel.value);
+            });
+        }
+    }
+
+    store.agentModelSelectorsLoaded = true;
 }
 
 let currentSessionRefreshPending = false;
@@ -346,6 +383,11 @@ export async function selectSession(id) {
     openSessionTab(id, info?.title);
     store.currentSessionId = id;
     store.activeTabId = id;
+    // 切会话：重置历史同步守卫，并按该会话自己的选择上下文恢复——
+    // 有手动标记用标记值（手动选择优先于历史），无标记则清空等待本会话历史
+    // 同步一次。避免把上一个会话的选择带进新会话，也避免历史回填覆盖手选项。
+    store.agentModelSyncedSession = '';
+    restoreSessionSelection(id);
     // 同步项目树高亮
     updateTreeActiveSession();
     // 重新渲染 Tab 栏，确保新 tab 呈激活态（openSessionTab 内部已渲染一次，但此时 activeTabId 还未更新）
@@ -355,9 +397,6 @@ export async function selectSession(id) {
     store.lastMessageCount = 0;
     store.messageLoadSeq++;
     store.questionCustomInput = ''; // 清除 question 自定义输入
-    // 会话目录可能变了：v2 的 agent/model 列表按目录取项目级配置，目录不同则重载
-    // （loadAgentModelSelectors 内部按目录去重，同目录不会重复请求）
-    loadAgentModelSelectors(info?.directory || '');
     // 标记已读：v2 的 /api/session/{id}/view 用 time.idle 原值做对账凭据，
     // 缺了返回 400。失败只记日志，不阻断会话打开——已读是附加语义。
     markSessionViewed(id, info?.idle);
@@ -430,32 +469,54 @@ export function isSessionLoadedAll(sessionID) {
  * 每次拉取 200 条，前置合并后保持滚动位置。
  *
  * v1 用 before=<本地构造的 {id,time} 游标> 翻页；v2 改为 cursor=<服务端游标>，
- * 且游标由服务端签发（内含 order/directory），客户端无法自造，
- * 因此这里使用首次加载时记下的 cursor.previous。
+ * 游标由服务端签发（base64url 内含 id/order/direction），客户端无法自造。
+ * 语义（对照 v2 服务端 SessionStore.messages 确证）：默认 desc（新→旧）顺序下
+ * cursor.next 沿时间线继续 → 指向「更早」，cursor.previous 反向 → 指向「更新」。
+ * 因此向更早翻页必须续用响应里的 cursor.next；误用 previous 会得到空页，
+ * 并被立即判定为「已全部加载」，导致上滑分页永久失效（历史 bug）。
  */
 export async function loadOlderMessages(sessionID) {
     const targetId = sessionID || store.currentSessionId;
     if (!targetId) return;
     if (!sessionPaging[targetId]) sessionPaging[targetId] = {};
     const paging = sessionPaging[targetId];
-    if (paging.loadedAll || paging.loading) return;
+    // 一次性提示：用平实语言告诉用户"为什么没有更早的消息"，避免暴露游标/limit 等术语
+    const note = (msg) => {
+        if (paging.diagShown === msg) return; // 同一原因只提示一次，避免滚动时刷屏
+        paging.diagShown = msg;
+        showToast(msg, 'info');
+    };
+    if (paging.loading) return;
+    if (paging.loadedAll) { note('已经是最早的消息了'); return; }
     const cursor = paging.cursor;
-    if (!cursor) { paging.loadedAll = true; return; }
+    if (!cursor) { paging.loadedAll = true; note('暂时没有更早的消息（若刚打开会话，稍后再试）'); return; }
     paging.loading = true;
     try {
         const res = await api.OpenCodeCall('GET', `/api/session/${encodeURIComponent(targetId)}/message?limit=200&cursor=${encodeURIComponent(cursor)}`);
         const messages = adaptMessages(targetId, res);
+        // 一次性诊断：成功取到更早消息时也给个反馈（便于确认"上滑确实命中了"）
+        if (messages.length) {
+            paging.diagShown = '';
+            showToast('已加载 ' + messages.length + ' 条更早的消息', 'success');
+        }
         // 渲染到目标会话自己的容器；仅当前激活会话保持滚动位置与同步用户定位
         const isCurrent = targetId === store.currentSessionId;
         const box = isCurrent ? ensureTabMessagesEl(targetId) : null;
         const prevHeight = box ? box.scrollHeight : 0;
-        const nextCursorValue = prevCursor(res);
-        if (!messages.length || !nextCursorValue) {
-            paging.loadedAll = true; // 没有更早消息，全部加载完成
+        // 续翻游标：desc 顺序下 cursor.next 指向更早（见函数头注释）
+        const moreCursor = nextCursor(res);
+        if (!messages.length) {
+            paging.loadedAll = true; paging.loadedAllReason = '服务端返回空页';
         } else {
-            paging.cursor = nextCursorValue;
+            paging.cursor = moreCursor;
             prependMessages(targetId, messages);
-            if (messages.length < 200) paging.loadedAll = true;
+            // 到顶判定必须看**原始页条数**：解析层会丢弃 idle/agent-switched 等边界消息，
+            // 用解析后的条数会把"满页但被过滤了几条"误判成"不足一页 → 已到顶"。
+            const rawCount = Array.isArray(res && res.data) ? res.data.length : messages.length;
+            if (rawCount < 200 || !moreCursor) {
+                paging.loadedAll = true;
+                paging.loadedAllReason = '本页原始 ' + rawCount + ' 条(limit=200)，续翻游标=' + (moreCursor ? '有' : '无');
+            }
             // 新加载的用户消息插入缓存头部，用户定位索引整体偏移（保持"看到的那条"位置）
             const addedUserCount = messages.filter(m => (m.info?.role || m.role) === 'user').length;
             shiftUserNavIndex(addedUserCount);
@@ -519,6 +580,8 @@ export async function loadMessages(sessionID) {
     }
     const box = ensureTabMessagesEl(targetId);
     if (!box) return;
+    // 兜底：确保滚动分页的监听已绑定（模块求值时 #ocMessagesPool 可能尚未就绪）
+    bindMessagePagingEvents();
     const existing = getCachedMessages(targetId);
     const hasCache = existing.length > 0;
     if (hasCache) {
@@ -560,22 +623,49 @@ export async function loadMessages(sessionID) {
         if (seq !== store.sessionLoadSeq[targetId]) return;
         // v2 返回 {data:[扁平消息], cursor}，需还原为 v1 的 [{info,parts}] 且按旧→新排列
         const incoming = adaptMessages(targetId, res);
-        // 记下「更早一页」的服务端游标，供向上滚动分页使用
+        // 记下「更早一页」的服务端游标，供向上滚动分页使用。
+        // desc 顺序下 cursor.next 指向更早（cursor.previous 指向更新，不能用于加载历史）
         if (!sessionPaging[targetId]) sessionPaging[targetId] = {};
-        sessionPaging[targetId].cursor = prevCursor(res);
-        // 校正缓存：缓存里可能已含向上分页加载的更早历史，直接整体覆盖会把它们抹掉，
-        // 并使“加载更多”因 loadedAll 残留而永久失效。因此以 API 首条消息为锚点，
-        // 只替换「锚点及之后」的最新一段，保留锚点之前的更早历史；
-        // 缓存为空 / 无历史（锚点就是首条）/ 找不到锚点时，整体覆盖即可（等价一次全量刷新）。
-        const firstId = String(incoming[0]?.info?.id || incoming[0]?.id || '');
-        const anchorIdx = firstId
-            ? existing.findIndex(item => String(item.info?.id || item.id || '') === firstId)
-            : -1;
-        cacheMessages(targetId, anchorIdx > 0 ? existing.slice(0, anchorIdx).concat(incoming) : incoming);
-        // 仅在“全新加载”路径判断是否已全部加载，避免覆盖有分页历史会话的分页状态
-        if (!hasCache && (incoming.length < 20 || !prevCursor(res))) {
+        sessionPaging[targetId].cursor = nextCursor(res);
+        // 校正缓存：缓存里可能已含向上分页加载的更早历史，直接整体覆盖会把它们抹掉
+        // （并使“加载更多”因 loadedAll 残留而永久失效）。以 API 首条消息为锚点：
+        //  - 找得到（anchorIdx>0）→ 保留锚点之前的更早历史 + 新页；
+        //  - 锚点就是缓存首条（=0）→ 无更早历史，直接整体覆盖；
+        //  - 找不到（窗口已被新消息错开，例如期间新增 ≥20 条）→ **按时间合并**：
+        //    保留缓存中早于新页首条的全部条目，再拼新页，按 id 去重并保持旧→新，
+        //    避免"刷新把已滚动加载出来的历史吞掉"。
+        const idOf = (it) => String(it?.info?.id || it?.id || '');
+        const createdOf = (it) => Number(it?.info?.time?.created ?? it?.time?.created ?? 0);
+        const firstId = idOf(incoming[0]);
+        const anchorIdx = firstId ? existing.findIndex(it => idOf(it) === firstId) : -1;
+        let merged;
+        if (anchorIdx > 0) {
+            merged = existing.slice(0, anchorIdx).concat(incoming);
+        } else if (anchorIdx === 0) {
+            merged = incoming;
+        } else {
+            const firstTime = incoming.length ? createdOf(incoming[0]) : 0;
+            const older = firstTime ? existing.filter(it => createdOf(it) < firstTime) : [];
+            const seen = new Set();
+            merged = older
+                .concat(incoming)
+                .sort((a, b) => createdOf(a) - createdOf(b))
+                .filter(it => {
+                    const k = idOf(it);
+                    if (!k || seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+        }
+        // 新页为空（极端情况）时保持缓存不动，避免把已加载历史清空
+        if (incoming.length) cacheMessages(targetId, merged);
+        // 仅在"全新加载"路径判断是否已全部加载，避免覆盖有分页历史会话的分页状态。
+        // 判据只看**服务端是否签发续翻游标**：服务端只要页非空就会签发 next（到顶的空页会在
+        // loadOlderMessages 里被识别）；不能再用解析后的条数（解析层会丢弃 idle 等边界消息）。
+        if (!hasCache && !nextCursor(res)) {
             if (!sessionPaging[targetId]) sessionPaging[targetId] = {};
             sessionPaging[targetId].loadedAll = true;
+            sessionPaging[targetId].loadedAllReason = '首屏无续翻游标（服务端未签发 next）';
         }
         const after = getCachedMessages(targetId);
         // 校正后数据与校正前一致时跳过重渲染，避免多余的全量重建与闪烁
@@ -1079,6 +1169,55 @@ export async function abortSession() {
  *  提交 prompt_async 请求返回后即释放，模型回复期间仍可继续发送下一条。 */
 let promptSending = false;
 
+// ============================
+// 发送后无响应看门狗
+// ============================
+// 背景：发送请求可能返回 200，但模型/agent 侧迟迟不产出任何内容，界面上毫无反应
+// （事件流断了、模型不可用、上游限流等都会如此）。这里以「最近一次模型活动时间」为基线，
+// 发送成功 20 秒内既无流式输出、也无任何失败事件时提示用户，避免再次"石沉大海"。
+// 维护方式：
+//   - markPromptSendStart()：每次点击发送进入发送流程时调用（重置基线 + 清旧定时器）；
+//   - notePromptActivity()：events.js 收到任意模型活动事件（text/reasoning/tool/step/execution/retry）时调用；
+//   - armPromptWatch()：prompt 请求成功返回后调用（启动 20s 检查定时器）；
+//   - clearPromptWatch()：发送失败或需要主动取消时调用（幂等）。
+const PROMPT_WATCH_TIMEOUT_MS = 20000;
+let promptActivityAt = 0;        // 最近一次（本次发送会话的）模型活动事件时间戳（毫秒）
+let promptWatchSessionID = '';   // 本次发送的会话 id（arm 时写入；多 Tab 并行时只认它的活动）
+let promptWatchTimer = null;
+
+/** 发送流程开始：重置活动基线并取消上一轮看门狗 */
+export function markPromptSendStart() {
+    promptActivityAt = Date.now();
+    promptWatchSessionID = '';
+    clearPromptWatch();
+}
+
+/** 收到模型活动事件：刷新基线（由 events.js 对每条活动类 v2 事件调用）。
+ *  仅认本次发送会话的事件——其它会话（多 Tab 并行）的流式输出不应掩盖本会话的静默。 */
+export function notePromptActivity(sessionID) {
+    if (promptWatchSessionID && sessionID && sessionID !== promptWatchSessionID) return;
+    promptActivityAt = Date.now();
+}
+
+/** prompt 请求成功返回：启动无响应检查（定时器触发时若基线仍停留在 20s 前，说明始终无活动） */
+export function armPromptWatch(sessionID) {
+    clearPromptWatch();
+    if (sessionID) promptWatchSessionID = sessionID;
+    promptWatchTimer = setTimeout(function () {
+        promptWatchTimer = null;
+        if (Date.now() - promptActivityAt < PROMPT_WATCH_TIMEOUT_MS) return; // 期间有活动，静默
+            showToast('已发送，但一直没有回应；请检查模型或智能体是否可用', 'error');
+    }, PROMPT_WATCH_TIMEOUT_MS);
+}
+
+/** 取消看门狗（幂等；发送失败、流程异常时调用） */
+export function clearPromptWatch() {
+    if (promptWatchTimer) {
+        clearTimeout(promptWatchTimer);
+        promptWatchTimer = null;
+    }
+}
+
 export async function sendPrompt() {
     if (!store.webRunning) return;
     if (promptSending) return;
@@ -1101,6 +1240,8 @@ export async function sendPrompt() {
     // 同一个 id —— 回执按 id 精确命中，不再需要「取最近一条」或文本比对这类猜测。
     const localMessageId = makeLocalMessageId();
     try {
+        // 发送流程开始：重置无响应看门狗基线（20s 内无任何模型活动会提示，见 armPromptWatch）
+        markPromptSendStart();
         if (isNew) {
             if (store.pendingWorkDir) {
                 sessionDir = store.pendingWorkDir;
@@ -1159,24 +1300,100 @@ export async function sendPrompt() {
         // messageID：把本地生成的 id 交给 opencode，让乐观消息与服务端确认后的消息同 id
         // （createUserMessage 采用 input.messageID ?? MessageID.ascending()，仅校验必须以 "msg" 开头）
         const body = { parts, messageID: localMessageId };
-        // 兜底校验：选择器里可能残留历史会话的失效名（插件改名 / agent 已删除），
-        // 直接作为 agent 参数发出去会让 opencode 抛 "Agent not found"（前端表现为 UnknownError）。
-        if (store.selectedAgent && isKnownAgentName(store.selectedAgent)) {
-            body.agent = store.selectedAgent;
-        }
-        // v2 的 prompt 不再接受 model / variant：
-        // 需先用 POST /api/session/{id}/model 切换会话模型，再以 {text, files, agents} 提交正文。
-        // 注：v2 的 prompt / model / interrupt 端点均不接收 directory 查询参数
-        // （工作目录由会话自身携带），故这里不再拼接目录查询串。
+        // 注：v2 的 prompt 请求体没有单数 agent 字段（schema 为
+        // {id?, text, files?, agents?, skills?, metadata?, delivery?, resume?}，additionalProperties:false），
+        // 且顶层 agents 是「附加 agent」语义、不能替代会话级配置；v2 的 agent/model
+        // 必须通过会话级切换端点单独提交：
+        //   POST /api/session/{id}/agent  body {agent:"<name>"}
+        //   POST /api/session/{id}/model  body {model:{providerID,id,variant?}}
+        // （把 agent 塞进 body、或让会话残留失效名，都会在执行时抛 Agent not found）
         const dirEl = document.getElementById('ocSideDirPath');
         const sid = store.currentSessionId;
-        const modelRef = (store.selectedModel && isKnownModelId(store.selectedModel))
-            ? toModelRef(store.selectedModel, store.selectedVariant)
-            : null;
-        if (modelRef) {
-            await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/model`, { model: modelRef });
+        // ===== 发送前严格校验（agent）=====
+        // 取值必须存在于当前 /api/agent 列表（store.agentList）：列表为空或值不在其中
+        // 一律不发（回退默认），并把选择器同步复位 + 界面提示——防止历史同步回填的失效
+        // 旧名（如插件改名前的「Sisyphus - Ultraworker」）被当作有效值发出去。
+        // 校验通过时用列表中的当前真实值（规范化匹配消除零宽字符/大小写差异），
+        // 保证发送名与服务端注册名一致。
+        let agentName = '';
+        const rawAgent = store.selectedAgent || '';
+        if (rawAgent) {
+            if (isKnownAgentName(rawAgent)) {
+                    agentName = resolveKnownValue(store.agentList, rawAgent, function(a) { return a && (a.id || a.name); }) || rawAgent;
+            } else if (!store.agentList.length && hasManualSessionSelection('agent')) {
+                // 列表数据不可用（尚未就绪/被异步清空）但该值是用户在本会话手选的：
+                // 以用户最后操作为准照发（服务端会做最终裁决），不得把手选的合法值判掉。
+                // 无手选标记（历史回填）的旧名仍走下方保守回退，防止失效名漏出。
+                agentName = rawAgent;
+            } else {
+                store.selectedAgent = '';
+                const agentSelEl = document.getElementById('ocAgentSelect');
+                if (agentSelEl) agentSelEl.value = '';
+                showToast('原智能体 `' + rawAgent + '` 已不存在，已改用默认', 'warning');
+            }
         }
-        await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/prompt`, toPromptBody(body));
+        // ===== 发送前严格校验（model）=====
+        // 与 agent 同理：值必须存在于当前 /api/model 列表（store.modelList），
+        // 否则不切换模型（回退会话默认）并提示。
+        let modelRef = null;
+        let resolvedModel = '';
+        const rawModel = store.selectedModel || '';
+        if (rawModel) {
+            resolvedModel = isKnownModelId(rawModel)
+                ? (resolveKnownValue(store.modelList, rawModel, function(m) { return m && m.value; }) || rawModel)
+                : '';
+            if (!resolvedModel && !store.modelList.length && hasManualSessionSelection('model')) {
+                // 与 agent 同一口径：列表不可用但值为用户手选时以用户最后操作为准，
+                // 仍交给 toModelRef 做形状校验（"provider/model" 形式不合法则回退默认）。
+                resolvedModel = rawModel;
+            }
+            if (resolvedModel) {
+                modelRef = toModelRef(resolvedModel, store.selectedVariant);
+            }
+            if (!modelRef) {
+                store.selectedModel = '';
+                const modelSelEl = document.getElementById('ocModelSelect');
+                if (modelSelEl) modelSelEl.value = '';
+                showToast('原模型 `' + rawModel + '` 已不存在，已回退默认', 'warning');
+            }
+        }
+        // 会话级切换先于 prompt：任一失败都中止本次发送并给出「HTTP 状态码 + 响应体 message」
+        // 的可见报错（formatApiError），绝不带着失效/未经确认的选择继续发送。
+        // 注：v2 的 prompt / model / interrupt 端点均不接收 directory 查询参数
+        // （工作目录由会话自身携带），故这里不再拼接目录查询串。
+        if (agentName) {
+            try {
+                await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/agent`, { agent: agentName });
+            } catch (e) {
+                throw new Error('切换 agent（' + agentName + '）失败: ' + formatApiError(e));
+            }
+        }
+        if (modelRef) {
+            try {
+                await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/model`, { model: modelRef });
+            } catch (e) {
+                throw new Error('切换模型（' + resolvedModel + '）失败: ' + formatApiError(e));
+            }
+        }
+        // v2 命令与提示词是两个端点：正文形如 "/命令名 [参数]"：
+        //  - 命中**技能 id** → 不调命令端点，而是把技能作为 prompt 的 skills 附件（下文 body.skills）；
+        //  - 命中**服务端命令** → 走 POST /api/session/{id}/command（body {command,text,delivery}），
+        //    否则会被当普通文本喂给模型、命令不会执行；
+        //  - 都不命中 → 照常走 prompt。
+        const cmdMatch = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text);
+        const skillId = cmdMatch && isKnownSkill(cmdMatch[1]) ? cmdMatch[1] : '';
+        if (cmdMatch && !skillId && isKnownCommand(cmdMatch[1])) {
+            await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/command`, {
+                command: cmdMatch[1],
+                text: (cmdMatch[2] || '').trim(),
+                delivery: 'steer',
+            });
+        } else {
+            if (skillId) body.skills = [{ id: skillId }];
+            await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/prompt`, toPromptBody(body));
+        }
+        // 发送成功：启动无响应看门狗——20s 内既无流式输出也无失败事件时提示（见 armPromptWatch）
+        armPromptWatch(sid);
         if (isNew) {
             dirEl.onclick = function() {
                 // 右侧面板会话目录：点击直接打开独立窗口（桌面端原生窗口 / Web 端新标签页）
@@ -1193,9 +1410,12 @@ export async function sendPrompt() {
         scheduleRefresh();
         updateSendButton();
     } catch (e) {
-        // 发送失败：按 id 精确移除乐观用户消息，避免残留"已发送"假象
+        // 发送失败：取消无响应看门狗，按 id 精确移除乐观用户消息，避免残留"已发送"假象。
+        // 错误信息经 formatApiError 展开：带 HTTP 状态码 + 响应体解析后的人话（v2 错误体
+        // 形如 {"kind":"Payload","message":"..."}，直接显示原始正文用户难以理解）。
+        clearPromptWatch();
         if (store.currentSessionId) removeLocalUserMessage(store.currentSessionId, localMessageId);
-        showToast('发送失败: ' + (e.message || e), 'error');
+        showToast('发送失败: ' + formatApiError(e), 'error');
     }
         btn.disabled = false;
     } finally {
@@ -1215,10 +1435,15 @@ setTabActivationHandler(function() {
 // ============================================================
 // 分页事件绑定：消息容器滚动到顶加载更早；用户定位到边界触发
 // ============================================================
-(function bindMessagePagingEvents() {
+// 注意：不能只在模块求值时绑定一次——若那时 #ocMessagesPool 尚未就绪，
+// 监听会永远绑不上（表现为"上滑毫无反应"）。故做成幂等函数，
+// 在模块加载、DOMContentLoaded、以及每次 loadMessages 时各尝试一次。
+export function bindMessagePagingEvents() {
     const pool = document.getElementById('ocMessagesPool');
-    if (pool) {
+    if (pool && !pool.dataset.pagingBound) {
+        pool.dataset.pagingBound = 'true';
         let scrollTimer = null;
+        // 第三个参数 true = 捕获阶段：scroll 不冒泡，但捕获可到达子容器的滚动事件
         pool.addEventListener('scroll', function() {
             if (scrollTimer) clearTimeout(scrollTimer);
             scrollTimer = setTimeout(function() {
@@ -1229,8 +1454,15 @@ setTabActivationHandler(function() {
             }, 250);
         }, true);
     }
-    // 用户定位（▲ 到最早一条）触发加载更早消息
-    document.addEventListener('oc-load-older', function() {
-        loadOlderMessages(store.currentSessionId);
-    });
-})();
+    if (document.body && !document.body.dataset.pagingOcBound) {
+        document.body.dataset.pagingOcBound = '1';
+        // 用户定位（▲ 到最早一条）触发加载更早消息
+        document.addEventListener('oc-load-older', function() {
+            loadOlderMessages(store.currentSessionId);
+        });
+    }
+}
+bindMessagePagingEvents();
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindMessagePagingEvents, { once: true });
+}

@@ -74,7 +74,7 @@ export const store = {
      *  类型定义与事件流中亦无任何 todo 相关项，故 v2 下为 false。 */
     todoSupported: false,
     /** 插件列表（来自 /config 的 plugin 数组，服务实际加载的插件；空=未配置） */
-    pluginStatus: [],
+    pluginStatus: null,
 
     // ============================
     // 消息缓存
@@ -145,6 +145,13 @@ export const store = {
      *  打开会话后只在首次同步时从消息历史回填选择器；用户在当前会话内手动选择后
      *  同样写入本字段，避免后续重渲染（SSE 刷新 / 滚动回填）覆盖用户的选择。 */
     agentModelSyncedSession: '',
+    /** 每个会话的手动 Agent/Model 选择标记：{ [sessionID]: { agent?: string, model?: string } }。
+     *  键存在 = 用户在该会话内手动改过对应选择器，此后该会话内**任何**历史同步/事件回填
+     *  都不得覆盖该项（见 render.js 的 doUpdateModelInfo）；切换会话时按各会话自己的
+     *  标记恢复选择（见 core/utils.js 的 restoreSessionSelection），切走再切回不丢失。
+     *  与 agentModelSyncedSession 的区别：后者是「本会话是否已同步过」的一次性守卫，
+     *  本字段记录「手动选择本身」，跨 Tab 切换持久保留，直到服务停止时清空。 */
+    manualSelectionBySession: {},
 
     // ============================
     // 子任务面板
@@ -186,3 +193,23 @@ export const store = {
 // ============================
 /** 页面 Web 服务配置的 localStorage 键名 */
 export const FRONTEND_WEB_CONFIG_KEY = 'oc-frontend-web-config';
+
+/**
+ * 当前项目目录（用于 OpenCode v2 的 location[directory] 作用域）。
+ *
+ * v2 的 /api/agent、/api/model、/api/command、/api/mcp、/api/plugin、/api/config
+ * 等端点按 location 取项目级配置；**不传 location 时服务端会退回其进程 CWD**
+ * （共享服务 `serve --service` 的 CWD 是用户 home），并把该目录登记成一个「项目」。
+ * 因此这类请求必须带上当前会话目录；拿不到目录时调用方应**跳过请求**，
+ * 绝不能让它们回落到默认 CWD，否则 home 会被误登记为项目。
+ */
+export function currentDir() {
+    const sid = store.currentSessionId;
+    const map = (typeof window !== 'undefined' && window._sessionMap) || {};
+    const info = sid ? map[sid] : null;
+    // 仅返回「当前会话」或「上次加载选择器所用」的目录；无会话时为空串。
+    // 调用方（agent/model/MCP/插件等需要 location[directory] 的接口）在目录为空时
+    // 会跳过请求——这与 MCP 的既有行为一致，避免回落到服务端 CWD=home 被登记成项目。
+    const dir = (info && info.directory) || store.agentModelSelectorsDir || '';
+    return typeof dir === 'string' ? dir.trim() : '';
+}

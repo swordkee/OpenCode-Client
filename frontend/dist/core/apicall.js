@@ -27,15 +27,31 @@ export const api = new Proxy({}, {
             //     const result = await api.OpenCodeAPI(method, path, data ? JSON.stringify(data) : '');
             return async (...args) => {
                 const requestMethod = args[0];
-                const requestPath = args[1];
+                const origPath = args[1];
+                let requestPath = origPath;
                 const requestData = args[2];
+                // 可选第 4 参：项目目录 → 附加 location[directory]（v2 的 deepObject 作用域）。
+                // 不传则不加。注意：需要 location 的端点，调用方在拿不到目录时必须**跳过请求**，
+                // 否则会回落到服务端 CWD（共享服务为 home）并被登记成项目。
+                const dir = args[3];
+                if (dir) {
+                    requestPath += (requestPath.indexOf('?') >= 0 ? '&' : '?') +
+                        'location%5Bdirectory%5D=' + encodeURIComponent(dir);
+                }
                 const requestBody = requestData  ? JSON.stringify(requestData) : '';
                 const result = await api.OpenCodeAPI(requestMethod,requestPath,requestBody);
                 if (!result.success) {
-                    throw new Error(result.error || result.body || `HTTP ${result.status}`);
+                    // 抛错时带上状态码与响应体（附加属性，向后兼容）：
+                    // 调用方（如 sendPrompt）需要把 HTTP 错误码与 v2 错误体
+                    // （{"kind":"Payload","message":"..."}）解析成人话展示给用户，
+                    // 否则「发送失败」只有一句无法定位原因的文本。
+                    const err = new Error(result.error || result.body || `HTTP ${result.status}`);
+                    err.status = result.status;
+                    err.body = result.body;
+                    throw err;
                 }
                 if (!result.body) return null;
-                if(requestPath === '/provider'){
+                if(origPath === '/provider'){
                     var data = JSON.parse(result.body);
                     var models = [];
                     (data.all || []).forEach(function(provider) {
@@ -181,8 +197,8 @@ const mockApi = (() => {
         TerminalWrite: async (data) => { console.log('mock term write:', data); },
         unOpenCode: async (sid, cont) => { console.log('mock launch:', sid, cont); },
         // web 管理
-        StartOpenCodeWeb: async (port, hostname, proxy) => {
-            store.webURL = `http://${hostname || '127.0.0.1'}:${port || 4096}`;
+        StartOpenCodeWeb: async (port, hostname, password, proxy) => {
+            store.webURL = `http://${hostname || '127.0.0.1'}:${port || 49374}`;
             store.webRunning = true;
             store.serverStatus = { url: store.webURL, health: '在线', version: 'mock' };
             // 不再直接调用业务层 updateWebUI，由调用方（service.startWeb）负责 UI 刷新
@@ -195,7 +211,7 @@ const mockApi = (() => {
             return { success: true };
         },
         GetWebStatus: async (hostname, port) => {
-            return { running: store.webRunning, url: store.webURL || `http://${hostname || '127.0.0.1'}:${port || 4096}`, health: store.webRunning ? '在线' : '离线', version: store.webRunning ? 'mock' : '' };
+            return { running: store.webRunning, url: store.webURL || `http://${hostname || '127.0.0.1'}:${port || 49374}`, health: store.webRunning ? '在线' : '离线', version: store.webRunning ? 'mock' : '' };
         },
         LaunchWindowsTerminal: async (mode, url, dir) => {
             console.log('mock launch wt:', mode, url, dir);
@@ -253,23 +269,40 @@ const mockApi = (() => {
             if (path.includes('/unrevert')) return { success: true, status: 200, body: 'true' };
             return { success: true, status: 200, body: '{}' };
         },
+        // mock：与后端一致的两层树（顶层目录 → 会话）
         GetProjectTree: async () => JSON.stringify([
-            { id: 'global', title: '全局项目', type: 'project', children: [
-                { id: 'global|/home/user/test', title: '/home/user/test', type: 'directory', children: [
-                    { id: 'ses_abc', title: '开发 Skill 桌面管理工具', type: 'session' },
-                ]},
+            { id: '/home/user/test', title: '/home/user/test', type: 'directory', children: [
+                { id: 'ses_abc', title: '开发 Skill 桌面管理工具', type: 'session', updatedAt: '2026-09-29 10:00', directory: '/home/user/test' },
             ]},
         ]),
         StartOpenCodeEvents: async () => ({ success: true }),
         StopOpenCodeEvents: async () => ({ success: true }),
-        // OMO 配置
-        GetModelConfig: async () => [
-            { key: 'sisyphus', type: 'agent', model: 'deepseek/deepseek-v4-pro', comment: '执行者：负责执行具体任务' },
-            { key: 'oracle', type: 'agent', model: 'deepseek/deepseek-v4-flash', comment: '分析师：代码质量审查与安全分析' },
-            { key: 'librarian', type: 'agent', model: 'deepseek/deepseek-v4-flash', comment: '搜索员：代码库搜索与知识检索' },
-            { key: 'quick', type: 'category', model: 'deepseek/deepseek-v4-flash', comment: '快速：简单问答和日常快速任务' },
-            { key: 'visual-engineering', type: 'category', model: 'deepseek/deepseek-v4-flash', comment: '视觉工程：UI设计和前端实现' },
-        ],
+        // ========== OMO Slim 配置 mock（浏览器预览用） ==========
+        GetSlimConfig: async () => ({
+            path: '~/.config/opencode/oh-my-opencode-slim.jsonc',
+            exists: true,
+            activePreset: 'rongsi',
+            presets: [
+                { name: 'rongsi', agents: [
+                    { key: 'orchestrator', model: 'deepseek/deepseek-flash', variant: 'max', comment: '主编排器：拆解任务、调度后台专家、汇总结果' },
+                    { key: 'oracle', model: 'deepseek/deepseek-flash', variant: 'max', comment: '高级顾问：架构决策、疑难调试、代码审查' },
+                    { key: 'explorer', model: 'deepseek/deepseek-flash', variant: 'low', comment: '代码库侦察：大范围搜索与结构梳理' },
+                ] },
+                { name: '省流', extends: 'rongsi', agents: [
+                    { key: 'orchestrator', model: 'deepseek/deepseek-flash', variant: 'max', comment: '主编排器：拆解任务、调度后台专家、汇总结果', inherited: true },
+                    { key: 'explorer', model: 'deepseek/deepseek-v4-flash', variant: 'low', comment: '代码库侦察：大范围搜索与结构梳理', inherited: true, overridden: true },
+                ] },
+            ],
+            envPresetOverride: '',
+            projectConfigPath: '',
+            revision: 'mock',
+        }),
+        SaveSlimConfig: async (payload) => ({ success: true }),
+        GetSlimConfigPath: async () => '~/.config/opencode/oh-my-opencode-slim.jsonc',
+        GetSlimAgentDescriptions: async () => ({
+            orchestrator: '主编排器：拆解任务、调度后台专家、汇总结果',
+            oracle: '高级顾问：架构决策、疑难调试、代码审查',
+        }),
         GetProviders: async () => [
             { key: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-ec****ffe1', enabled: true, models: [{id:'deepseek-v4-pro',name:'DeepSeek-V4-Pro'}] },
             { key: 'siliconflow', name: 'SiliconFlow', baseURL: 'https://api.siliconflow.cn/v1', apiKey: 'sk-vg****bshs', enabled: false, models: [] },
@@ -282,35 +315,9 @@ const mockApi = (() => {
             return ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'];
         },
         GetProviderConfigPath: async () => '~/.config/opencode/opencode.jsonc',
-        GetConfigPath: async () => '~/.config/opencode/oh-my-openagent.jsonc',
-        GetFullConfig: async () => `{
-            // 执行者：负责执行具体任务
-            "agents": {
-                "sisyphus": { "model": "deepseek/deepseek-v4-pro" },
-                "oracle": { "model": "deepseek/deepseek-v4-flash" },
-                "librarian": { "model": "deepseek/deepseek-v4-flash" },
-                "explore": { "model": "deepseek/deepseek-v4-pro" },
-                "sisyphus-junior": { "model": "deepseek/deepseek-v4-flash" },
-                "momus": { "model": "deepseek/deepseek-v4-flash" },
-                "metis": { "model": "deepseek/deepseek-v4-pro" },
-                "hephaestus": { "model": "deepseek/deepseek-v4-flash" },
-                "prometheus": { "model": "deepseek/deepseek-v4-flash" },
-                "atlas": { "model": "deepseek/deepseek-v4-pro" },
-                "multimodal-looker": { "model": "deepseek/deepseek-v4-flash" }
-            },
-            "categories": {
-                "quick": { "model": "deepseek/deepseek-v4-flash" },
-                "visual-engineering": { "model": "deepseek/deepseek-v4-flash" },
-                "ultrabrain": { "model": "deepseek/deepseek-v4-flash" },
-                "deep": { "model": "deepseek/deepseek-v4-flash" },
-                "artistry": { "model": "deepseek/deepseek-v4-flash" },
-                "unspecified-low": { "model": "deepseek/deepseek-v4-flash" },
-                "unspecified-high": { "model": "deepseek/deepseek-v4-flash" }
-            }
-        }`,
+
         GetWorkDir: async () => '/home/user/ai_test/skill-manager',
-        AddModelType: async () => ({ success: true }),
-        DeleteModelType: async () => ({ success: true }),
+
         AnswerQuestion: async (sessionID, answers) => {
             console.log('mock answer question:', sessionID, answers);
             return { success: true, status: 200 };
@@ -319,39 +326,6 @@ const mockApi = (() => {
             console.log('mock reject question:', sessionID);
             return { success: true, status: 200 };
         },
-        // ========== 方案管理 mock ==========
-        GetSchemeDir: async () => '/.sisyphus/omo-schemes',
-        ListSchemes: async () => [
-            { name: 'default', fileName: 'default.jsonc', fullPath: '/.sisyphus/omo-schemes/default.jsonc' },
-            { name: 'custom', fileName: 'custom.jsonc', fullPath: '/.sisyphus/omo-schemes/custom.jsonc' },
-        ],
-        ReadScheme: async (name) => {
-            const mockData = {
-                agents: {
-                    sisyphus: { model: 'deepseek/deepseek-v4-pro' },
-                    oracle: { model: 'deepseek/deepseek-v4-flash' },
-                    librarian: { model: 'deepseek/deepseek-v4-flash'}
-                },
-                categories: {
-                    quick: { model: 'deepseek/deepseek-v4-flash' },
-                    'visual-engineering': { model: 'deepseek/deepseek-v4-pro' }
-                }
-            };
-            return JSON.stringify(mockData, null, 2);
-        },
-        SaveScheme: async (name, content) => {},
-        SaveSchemeEntries: async (name, entries) => ({ success: true }),
-        ReadSchemeEntries: async (name) => [
-            { key: 'sisyphus', type: 'agents', model: 'deepseek/deepseek-v4-pro', variant: '', reasoning: 'max', comment: '' },
-            { key: 'oracle', type: 'agents', model: 'deepseek/deepseek-v4-flash', variant: '', reasoning: 'high', comment: '' },
-            { key: 'quick', type: 'categories', model: 'deepseek/deepseek-v4-flash', variant: '', reasoning: 'low', comment: '' },
-        ],
-        ParseConfigContent: async (content) => [
-            { key: 'sisyphus', type: 'agents', model: 'deepseek/deepseek-v4-pro', variant: '', reasoning: 'max', comment: '' },
-            { key: 'oracle', type: 'agents', model: 'deepseek/deepseek-v4-flash', variant: '', reasoning: 'high', comment: '' },
-        ],
-        ExportConfigEntries: async (dir, filename, entries) => dir + '\\' + filename,
-        OpenSchemeDir: async () => { showToast('模拟打开方案目录', 'info'); },
         // ========== 技能源目录管理 mock ==========
         AddSkillSourceDir: async (dir) => ({ success: true }),
         RemoveSkillSourceDir: async (dir) => ({ success: true }),
