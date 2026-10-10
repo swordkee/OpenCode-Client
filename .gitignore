@@ -35,3 +35,7 @@ assets/
 .task/
 log/
 bin/
+# wails3 生成的绑定（generate bindings 每次构建全量重建，且由本仓 app.go / model
+# 推导而来；入库只会与上游互相冲突，故按生成物处理）
+frontend/dist/bindings/
+
