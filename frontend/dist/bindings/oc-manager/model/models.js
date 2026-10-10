@@ -98,6 +98,60 @@ export class AggregatedSourceInfo {
 }
 
 /**
+ * Capabilities 模型能力（对应 OpenCode v2 的 models.<id>.capabilities）。
+ * 取代 v1 的 modalities 与 tool_call。
+ */
+export class Capabilities {
+    /**
+     * Creates a new Capabilities instance.
+     * @param {Partial<Capabilities>} [$$source = {}] - The source object to create the Capabilities.
+     */
+    constructor($$source = {}) {
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {boolean | null | undefined}
+             */
+            this["tools"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string[] | undefined}
+             */
+            this["input"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string[] | undefined}
+             */
+            this["output"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Capabilities instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {Capabilities}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType0;
+        const $$createField2_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("input" in $$parsedSource) {
+            $$parsedSource["input"] = $$createField1_0($$parsedSource["input"]);
+        }
+        if ("output" in $$parsedSource) {
+            $$parsedSource["output"] = $$createField2_0($$parsedSource["output"]);
+        }
+        return new Capabilities(/** @type {Partial<Capabilities>} */($$parsedSource));
+    }
+}
+
+/**
  * CmdGroup 命令分组。
  */
 export class CmdGroup {
@@ -137,7 +191,7 @@ export class CmdGroup {
      * @returns {CmdGroup}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType1;
+        const $$createField1_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("cmds" in $$parsedSource) {
             $$parsedSource["cmds"] = $$createField1_0($$parsedSource["cmds"]);
@@ -506,7 +560,7 @@ export class FileBrowserListResult {
      * @returns {FileBrowserListResult}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType3;
+        const $$createField3_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField3_0($$parsedSource["items"]);
@@ -1014,7 +1068,7 @@ export class GitCommitFilePreviewResult {
      * @returns {GitCommitFilePreviewResult}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType5;
+        const $$createField2_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("blocks" in $$parsedSource) {
             $$parsedSource["blocks"] = $$createField2_0($$parsedSource["blocks"]);
@@ -1056,7 +1110,7 @@ export class GitCommitFilesResult {
      * @returns {GitCommitFilesResult}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType7;
+        const $$createField1_0 = $$createType8;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField1_0($$parsedSource["files"]);
@@ -1098,8 +1152,8 @@ export class GitDiffBlock {
      * @returns {GitDiffBlock}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType9;
-        const $$createField1_0 = $$createType9;
+        const $$createField0_0 = $$createType10;
+        const $$createField1_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("left" in $$parsedSource) {
             $$parsedSource["left"] = $$createField0_0($$parsedSource["left"]);
@@ -1258,8 +1312,8 @@ export class GitFilePreviewResult {
      * @returns {GitFilePreviewResult}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType5;
-        const $$createField5_0 = $$createType5;
+        const $$createField4_0 = $$createType6;
+        const $$createField5_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stagedBlocks" in $$parsedSource) {
             $$parsedSource["stagedBlocks"] = $$createField4_0($$parsedSource["stagedBlocks"]);
@@ -1384,7 +1438,7 @@ export class GitHistoryResult {
      * @returns {GitHistoryResult}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType11;
+        const $$createField0_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField0_0($$parsedSource["items"]);
@@ -1433,7 +1487,7 @@ export class GitStatusResult {
      * @returns {GitStatusResult}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType13;
+        const $$createField1_0 = $$createType14;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField1_0($$parsedSource["files"]);
@@ -1586,7 +1640,7 @@ export class KnowledgeCategory {
      * @returns {KnowledgeCategory}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType15;
+        const $$createField2_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("children" in $$parsedSource) {
             $$parsedSource["children"] = $$createField2_0($$parsedSource["children"]);
@@ -1686,8 +1740,8 @@ export class KnowledgeEntry {
      * @returns {KnowledgeEntry}
      */
     static createFrom($$source = {}) {
-        const $$createField3_0 = $$createType16;
-        const $$createField7_0 = $$createType16;
+        const $$createField3_0 = $$createType0;
+        const $$createField7_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField3_0($$parsedSource["tags"]);
@@ -1696,118 +1750,6 @@ export class KnowledgeEntry {
             $$parsedSource["converted"] = $$createField7_0($$parsedSource["converted"]);
         }
         return new KnowledgeEntry(/** @type {Partial<KnowledgeEntry>} */($$parsedSource));
-    }
-}
-
-/**
- * Modalities 模型输入/输出能力（对应 opencode.jsonc 的 modalities 字段）
- */
-export class Modalities {
-    /**
-     * Creates a new Modalities instance.
-     * @param {Partial<Modalities>} [$$source = {}] - The source object to create the Modalities.
-     */
-    constructor($$source = {}) {
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {string[] | undefined}
-             */
-            this["input"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {string[] | undefined}
-             */
-            this["output"] = undefined;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new Modalities instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {Modalities}
-     */
-    static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType16;
-        const $$createField1_0 = $$createType16;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("input" in $$parsedSource) {
-            $$parsedSource["input"] = $$createField0_0($$parsedSource["input"]);
-        }
-        if ("output" in $$parsedSource) {
-            $$parsedSource["output"] = $$createField1_0($$parsedSource["output"]);
-        }
-        return new Modalities(/** @type {Partial<Modalities>} */($$parsedSource));
-    }
-}
-
-/**
- * ModelEntry 前端展示用的模型条目。
- */
-export class ModelEntry {
-    /**
-     * Creates a new ModelEntry instance.
-     * @param {Partial<ModelEntry>} [$$source = {}] - The source object to create the ModelEntry.
-     */
-    constructor($$source = {}) {
-        if (!("key" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["key"] = "";
-        }
-        if (!("type" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["type"] = "";
-        }
-        if (!("model" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["model"] = "";
-        }
-        if (!("variant" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["variant"] = "";
-        }
-        if (!("reasoning" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["reasoning"] = "";
-        }
-        if (!("comment" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["comment"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ModelEntry instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {ModelEntry}
-     */
-    static createFrom($$source = {}) {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ModelEntry(/** @type {Partial<ModelEntry>} */($$parsedSource));
     }
 }
 
@@ -1837,9 +1779,16 @@ export class ModelInfo {
         if (/** @type {any} */(false)) {
             /**
              * @member
-             * @type {Modalities | null | undefined}
+             * @type {string | undefined}
              */
-            this["modalities"] = undefined;
+            this["modelID"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {Capabilities | null | undefined}
+             */
+            this["capabilities"] = undefined;
         }
 
         Object.assign(this, $$source);
@@ -1851,10 +1800,10 @@ export class ModelInfo {
      * @returns {ModelInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField2_0 = $$createType18;
+        const $$createField3_0 = $$createType18;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("modalities" in $$parsedSource) {
-            $$parsedSource["modalities"] = $$createField2_0($$parsedSource["modalities"]);
+        if ("capabilities" in $$parsedSource) {
+            $$parsedSource["capabilities"] = $$createField3_0($$parsedSource["capabilities"]);
         }
         return new ModelInfo(/** @type {Partial<ModelInfo>} */($$parsedSource));
     }
@@ -2122,12 +2071,12 @@ export class ProviderInfo {
              */
             this["apiKey"] = "";
         }
-        if (!("npm" in $$source)) {
+        if (!("package" in $$source)) {
             /**
              * @member
              * @type {string}
              */
-            this["npm"] = "";
+            this["package"] = "";
         }
         if (!("enabled" in $$source)) {
             /**
@@ -2199,12 +2148,12 @@ export class ProviderSave {
              */
             this["apiKey"] = "";
         }
-        if (!("npm" in $$source)) {
+        if (!("package" in $$source)) {
             /**
              * @member
              * @type {string}
              */
-            this["npm"] = "";
+            this["package"] = "";
         }
         if (!("enabled" in $$source)) {
             /**
@@ -2381,10 +2330,10 @@ export class SchemeApplyResult {
      * @returns {SchemeApplyResult}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType16;
-        const $$createField1_0 = $$createType16;
-        const $$createField2_0 = $$createType16;
-        const $$createField3_0 = $$createType16;
+        const $$createField0_0 = $$createType0;
+        const $$createField1_0 = $$createType0;
+        const $$createField2_0 = $$createType0;
+        const $$createField3_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("applied" in $$parsedSource) {
             $$parsedSource["applied"] = $$createField0_0($$parsedSource["applied"]);
@@ -2399,51 +2348,6 @@ export class SchemeApplyResult {
             $$parsedSource["errors"] = $$createField3_0($$parsedSource["errors"]);
         }
         return new SchemeApplyResult(/** @type {Partial<SchemeApplyResult>} */($$parsedSource));
-    }
-}
-
-/**
- * SchemeInfo 方案文件信息。
- */
-export class SchemeInfo {
-    /**
-     * Creates a new SchemeInfo instance.
-     * @param {Partial<SchemeInfo>} [$$source = {}] - The source object to create the SchemeInfo.
-     */
-    constructor($$source = {}) {
-        if (!("name" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["name"] = "";
-        }
-        if (!("fileName" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["fileName"] = "";
-        }
-        if (!("fullPath" in $$source)) {
-            /**
-             * @member
-             * @type {string}
-             */
-            this["fullPath"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new SchemeInfo instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {SchemeInfo}
-     */
-    static createFrom($$source = {}) {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new SchemeInfo(/** @type {Partial<SchemeInfo>} */($$parsedSource));
     }
 }
 
@@ -2487,7 +2391,7 @@ export class SkillConfigResult {
      * @returns {SkillConfigResult}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType16;
+        const $$createField0_0 = $$createType0;
         const $$createField1_0 = $$createType25;
         const $$createField2_0 = $$createType26;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
@@ -2802,24 +2706,24 @@ export class WebResult {
 }
 
 // Private type creation functions
-const $$createType0 = CmdInfo.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = FileBrowserItem.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = GitDiffBlock.createFrom;
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = GitCommitChangedFile.createFrom;
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = GitDiffLine.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = GitHistoryItem.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = GitChangedFile.createFrom;
-const $$createType13 = $Create.Array($$createType12);
-const $$createType14 = KnowledgeCategory.createFrom;
-const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = $Create.Array($Create.Any);
-const $$createType17 = Modalities.createFrom;
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = CmdInfo.createFrom;
+const $$createType2 = $Create.Array($$createType1);
+const $$createType3 = FileBrowserItem.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = GitDiffBlock.createFrom;
+const $$createType6 = $Create.Array($$createType5);
+const $$createType7 = GitCommitChangedFile.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = GitDiffLine.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = GitHistoryItem.createFrom;
+const $$createType12 = $Create.Array($$createType11);
+const $$createType13 = GitChangedFile.createFrom;
+const $$createType14 = $Create.Array($$createType13);
+const $$createType15 = KnowledgeCategory.createFrom;
+const $$createType16 = $Create.Array($$createType15);
+const $$createType17 = Capabilities.createFrom;
 const $$createType18 = $Create.Nullable($$createType17);
 const $$createType19 = ProjectConfigTab.createFrom;
 const $$createType20 = ProjectConfigFileEntry.createFrom;
