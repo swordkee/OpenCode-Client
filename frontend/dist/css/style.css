@@ -237,11 +237,56 @@ input::placeholder, textarea::placeholder {
     -webkit-app-region: no-drag;
 }
 
+/* 顶部标题：行为上是「折叠/展开侧边栏」的按钮（chat/navigation.js 绑定），
+   在此补上按钮态的视觉反馈：hover 浮出色块、按压轻微回缩。
+   内边距用等量左负外边距抵消，文字视觉位置保持不动、也撑不破 48px 的 header；
+   颜色走主题变量，深浅主题自动适配 */
 .app-title {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
     letter-spacing: -0.01em;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 10px;
+    margin-left: -10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+/* hover：浮现与侧边栏导航项同源的浅色块，提示「这里可以点」 */
+.app-title:hover {
+    transform: scale(1.03);
+}
+
+/* 按压：背景加深一档 + 与 .btn:active 同款的轻微缩放，保持克制 */
+.app-title:active {
+    background: var(--bg-sidebar-active);
+    transform: scale(0.97);
+}
+
+/* 键盘聚焦：沿用项目统一的 accent 外描边风格 */
+.app-title:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* 标题左侧图标：assets/侧边栏.svg 作遮罩，颜色随标题文字（同侧栏导航图标的 mask 机制） */
+.app-title-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    background: currentColor;
+    -webkit-mask-image: url("../assets/侧边栏.svg");
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+    mask-image: url("../assets/侧边栏.svg");
+    mask-repeat: no-repeat;
+    mask-position: center;
+    mask-size: contain;
 }
 
 /* ========== 按钮 (Apple 风格) ========== */
@@ -511,6 +556,45 @@ input::placeholder, textarea::placeholder {
 
 .sidebar.collapsed .nav-icon {
     margin: 0 auto;
+}
+
+/* 左下角版本信息：展开态=图标+vX.Y.Z；折叠态=仅图标（版本号由 title 悬浮气泡显示） */
+.sidebar-version {
+    margin-top: auto; /* 推至侧栏底部（sidebar 为 flex column） */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.sidebar-version-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    background: currentColor;
+    -webkit-mask-image: url("../assets/信息.svg");
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+    mask-image: url("../assets/信息.svg");
+    mask-repeat: no-repeat;
+    mask-position: center;
+    mask-size: contain;
+}
+
+.sidebar.collapsed .sidebar-version {
+    justify-content: center;
+    gap: 0;
+    padding: 8px 6px;
+}
+
+.sidebar.collapsed .sidebar-version-text {
+    display: none;
 }
 
 /* ========== 内容区域 ========== */
@@ -5597,6 +5681,10 @@ input::placeholder, textarea::placeholder {
     height: 100vh;
     border-radius: 0;
     box-shadow: none;
+}
+/* 独立窗口里关闭按钮无意义（整个窗口即文件浏览器，关窗即退出），隐藏 */
+#fileBrowserModal.file-browser-standalone #btnCloseFileBrowser {
+    display: none;
 }
 .file-browser-modal .modal-header {
     border-bottom: 1px solid var(--border);

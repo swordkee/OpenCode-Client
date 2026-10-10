@@ -7,7 +7,7 @@
 
 import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
-import { escapeHtml, showToast, getActiveMessagesEl, getCachedMessages, safeText, modelDisplayLabel } from '../core/utils.js';
+import { escapeHtml, showToast, getActiveMessagesEl, getCachedMessages, normalizeMessageItem, isInternalUserMessage, safeText, modelDisplayLabel, bindOverlayClose } from '../core/utils.js';
 import { adaptMessages } from '../core/v2compat.js';
 import { renderPart, setRenderTodosHandler } from './render.js';
 
@@ -351,9 +351,8 @@ export function bindSubtaskModalEvents() {
     const modal = document.getElementById('subtaskModal');
     if (!modal || modal.dataset.eventsBound === '1') return;
 
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeSubtaskModal();
-    });
+    // 仅当按下与松开都在遮罩上才关闭（避免弹窗内拖选误关）
+    bindOverlayClose(modal, closeSubtaskModal);
     document.getElementById('subtaskModalCloseBtn')?.addEventListener('click', closeSubtaskModal);
     document.getElementById('subtaskModalCancelBtn')?.addEventListener('click', closeSubtaskModal);
 

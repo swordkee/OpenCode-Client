@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.12.0
-	github.com/wailsapp/wails/v3 v3.0.0-beta.23
+	github.com/wailsapp/wails/v3 v3.0.0-beta.28
 )
 
 require (
@@ -18,3 +18,5 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
+
+ignore ./bin/agentdatas/cache
