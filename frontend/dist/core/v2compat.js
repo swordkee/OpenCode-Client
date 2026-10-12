@@ -114,6 +114,9 @@ export function toPromptBody(v1body) {
         if (skills.length) out.skills = skills;
     }
     if (body.messageID) out.id = body.messageID;
+    // 投递方式（v2 Session.Inbox.Delivery：'steer' | 'queue'）——调用方仅在会话忙时
+    // 置 'queue'（见 session.js 发送路径）；闲时不传，服务端按默认立即执行。
+    if (body.delivery) out.delivery = body.delivery;
     return out;
 }
 

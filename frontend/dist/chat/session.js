@@ -1406,10 +1406,19 @@ export async function sendPrompt() {
             });
         } else {
             if (skillId) body.skills = [{ id: skillId }];
+            // 会话忙时入队（delivery=queue）：服务端把消息停进 inbox，空闲后按序消化
+            //（v2 Session.Inbox.Delivery：steer=插到当前执行的下一步边界，queue=排队等候空闲；
+            // 忙时不带 delivery 直接发会被服务端拒绝）。乐观消息与 inbox.enqueued 回执
+            // 同 id（body.messageID）合并，不会重复显示。
+            if (isSessionBusy(sid)) body.delivery = 'queue';
             await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/prompt`, toPromptBody(body));
+            if (body.delivery === 'queue') {
+                showToast('会话正忙，消息已排队（空闲后自动发送）', 'info');
+            }
         }
         // 发送成功：启动无响应看门狗——20s 内既无流式输出也无失败事件时提示（见 armPromptWatch）
-        armPromptWatch(sid);
+        // 排队消息不启动：空闲前本就不会有输出，20s 静默是必然而非异常。
+        if (body.delivery !== 'queue') armPromptWatch(sid);
         if (isNew) {
             dirEl.onclick = function() {
                 // 右侧面板会话目录：点击直接打开独立窗口（桌面端原生窗口 / Web 端新标签页）
