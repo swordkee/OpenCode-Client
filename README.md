@@ -81,13 +81,15 @@
 
 ## 绿色便携
 
-OC Manager 是**绿色便携**应用：程序目录自带一切，拷走即用，不写系统目录。
+OC Manager 是**绿色便携**应用：程序目录自带一切，拷走即用。
+
+> 默认使用系统 XDG 路径（与引入便携功能前完全一致）；把数据也收进程序目录需显式开启便携模式，见下文「开启便携模式」。
 
 ```
 <程序目录>/
   oc-manager.exe          # 主程序
   tools/opencode.exe      # 自带的 opencode —— 优先使用，无需系统安装
-  agentdatas/             # 便携数据（opencode 与 OC Manager 共用）
+  agentdatas/             # 便携数据（仅开启便携模式时创建）
     config/opencode/      # 配置：opencode.jsonc、OMO 方案、service.json
     data/opencode/        # 数据：会话、凭据
     cache/opencode/       # 缓存（可再生）
@@ -99,9 +101,19 @@ OC Manager 是**绿色便携**应用：程序目录自带一切，拷走即用�
 ```
 
 - **自带 opencode**——启动服务时优先使用 `tools/opencode.exe`，不依赖系统 `PATH`，系统未安装 opencode 也能正常运行。
-- **免安装 / 整体搬迁**——整个目录拷到任意路径或另一台机器即可运行，配置、会话、知识库全在目录内，不污染 `~/.config`、`~/.local`。
-- **便携数据目录**——程序启动最早期通过 5 个 XDG 环境变量，把 opencode 的配置 / 数据 / 缓存 / 状态指向程序目录下的 `agentdatas/`。
+- **免安装 / 整体搬迁**——整个目录拷到任意路径或另一台机器即可运行，程序与内置资源全在目录内；会话数据默认仍在系统 XDG，开启便携模式后才一并收进 `agentdatas/`。
+- **便携数据目录（开关控制，默认关闭）**——开启后程序启动最早期通过 5 个 XDG 环境变量，把 opencode 的配置 / 数据 / 缓存 / 状态指向程序目录下的 `agentdatas/`；**关闭时不创建 `agentdatas`、不改任何 XDG 变量**，opencode 走系统 XDG 路径（`~/.config`、`~/.local`）。
 - **启动拦截**——启动服务前检测系统中是否已有 opencode 服务在运行（外部启动或上次残留），命中则拒绝启动，避免两套服务并存。
+
+### 开启便携模式
+
+本功能会把 opencode 的数据**分裂**成两套（系统 XDG 一套、程序目录 `agentdatas/` 一套），
+误开启会让历史会话「看起来消失」，因此**默认关闭**，只在显式开启时生效。两种开启方式（优先级从高到低）：
+
+1. 环境变量 `OC_MANAGER_PORTABLE`（取值 `1` / `true` / `yes` / `on`；设为 `0` / `false` 等可反向强制关闭）
+2. 程序目录下放 `portable.json`，内容 `{"portable": true}`
+
+两者都不存在时 = 关闭。开启后重启 OC Manager 生效。
 
 ### 获取 opencode
 
@@ -113,8 +125,9 @@ OC Manager 与 opencode **v1、v2** 均可配合使用：
 
 ### 迁移到便携版
 
-若此前使用系统安装的 opencode，可按下列步骤迁入便携目录：
+若此前使用系统安装的 opencode，可按下列步骤迁入便携目录（**先按上文开启便携模式**，否则程序仍读写系统 XDG，搬进去的文件不会被使用）：
 
+0. 开启便携模式：程序目录放 `portable.json`（`{"portable": true}`）或设 `OC_MANAGER_PORTABLE=1`
 1. 把 opencode 可执行文件放到 `<程序目录>/tools/opencode.exe`
 2. 旧配置 → `<程序目录>/agentdatas/config/opencode/`（`opencode.jsonc`、OMO 方案、`skills/`、`commands/`、`rules/`）
 3. 旧数据 / 凭据（通常 `~/.local/share/opencode`）→ `<程序目录>/agentdatas/data/opencode/`
