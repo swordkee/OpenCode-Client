@@ -9,8 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-    unwrap, unwrapList, dirQuery, locationQuery, toModelOptions, toModelRef,
-    toPromptBody, adaptMessages, adaptEvent, normalizeStatuses, prevCursor, nextCursor,
+    unwrap, unwrapList, toModelOptions, toModelRef,
+    toPromptBody, adaptMessages, adaptEvent, normalizeStatuses, nextCursor,
 } from "../frontend/dist/core/v2compat.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -38,18 +38,6 @@ test("unwrapList 恒返回数组", () => {
 });
 
 // ============ 查询串 ============
-
-test("dirQuery 生成 v1/v2 通用会话作用域", () => {
-    assert.equal(dirQuery(""), "");
-    assert.equal(dirQuery("C:\\a b"), "?directory=C%3A%5Ca%20b");
-});
-
-test("locationQuery 用 deepObject 编码（写成 location= 会被服务端忽略）", () => {
-    assert.equal(locationQuery(""), "");
-    const q = locationQuery("C:\\work");
-    assert.ok(q.startsWith("?location%5Bdirectory%5D="), "实际: " + q);
-    assert.ok(!q.includes("?location="), "不得写成 location=");
-});
 
 // ============ 模型选项 ============
 
@@ -425,12 +413,9 @@ test("缺关键字段的事件被安全丢弃（不抛错）", () => {
 
 // ============ 游标 ============
 
-test("prevCursor / nextCursor 读取服务端游标", () => {
+test("nextCursor 读取服务端游标", () => {
     const raw = fx("messages-basic.json");
-    assert.equal(typeof prevCursor(raw), "string");
     assert.equal(typeof nextCursor(raw), "string");
-    assert.notEqual(prevCursor(raw), nextCursor(raw));
-    assert.equal(prevCursor({}), null);
     assert.equal(nextCursor(null), null);
 });
 

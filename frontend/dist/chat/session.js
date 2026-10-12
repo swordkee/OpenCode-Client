@@ -3,27 +3,29 @@
 // 负责会话选择/创建/加载、Agent/Model 选择器、附件管理、消息发送、轮询与中止
 // 依赖：core/state.js、core/utils.js（showToast, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages）、
 //       core/apicall.js（api）、chat/mobile.js（isMobileTreeMode）、chat/tabs.js（openSessionTab, renderTabsBar, setTabActivationHandler）、
-//       chat/sidepanel.js（extractSubtaskSummaries, renderSubtaskPanel）、chat/events.js（loadSessionStatuses）、
-//       chat/render.js（isSessionBusy, smartScroll, updateSendButton, renderMessages）、chat/tree.js（rememberKnownDir）、
+//       chat/sidepanel.js（refreshSubtaskPanel, scheduleSubtaskExtraction）、chat/events.js（loadSessionStatuses）、
+//       chat/render.js（isSessionBusy, smartScroll, updateSendButton, renderMessages）、
 //       chat/search.js（resetUserNav）、chat/cache.js（cacheMessages, ensurePendingAssistant, renderPendingAssistantPlaceholder, renderCachedMessages）
 //       filebrowser/browser.js（openFileBrowserStandaloneFor）——保留全局守卫调用
 // 解环说明：updateSendButton 已移入 chat/render.js；pendingWorkDir 已移入 core/state.js 的 store；
-//           通过 setTabActivationHandler 向 tabs.js 注入会话激活加载回调，避免 tabs↔session 循环依赖。
+//           通过 setTabActivationHandler 向 tabs.js 注入会话激活加载回调，避免 tabs↔session 循环依赖；
+//           本模块对外提供的动作（loadMessages 等 7 个）经 core/utils.js 的 setSessionActionHandlers
+//           注册，events.js / cmd-palette.js 不再静态 import 本模块（解 session↔events、session↔cmd-palette 环）。
 // ============================================================
 
 import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
-import { showToast, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, isKnownAgentName, isKnownModelId, resolveKnownValue, markManualSelection, restoreSessionSelection, refreshServiceStatus, hasManualSessionSelection } from '../core/utils.js';
+import { showToast, showApiError, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, isKnownAgentName, isKnownModelId, resolveKnownValue, markManualSelection, restoreSessionSelection, hasManualSessionSelection, setSessionActionHandlers } from '../core/utils.js';
 import { isMobileTreeMode } from './mobile.js';
 import { openSessionTab, renderTabsBar, setTabActivationHandler } from './tabs.js';
-import { extractSubtaskSummaries, renderSubtaskPanel } from './sidepanel.js';
+import { refreshSubtaskPanel, scheduleSubtaskExtraction } from './sidepanel.js';
 import { loadSessionStatuses } from './events.js';
 import { isSessionBusy, smartScroll, updateSendButton, renderMessages, ensureSelectOption } from './render.js';
-// 与 cmd-palette 互相 import（它在函数内调用本模块的 loadMessages 等）；
-// ESM 循环在"仅运行时调用"下是安全的：这里只在发送时调用 isKnownCommand。
+// 解环后与 cmd-palette 的依赖为单向：它经 core/utils.js 注册中心调用本模块的
+// loadMessages 等动作（见 setSessionActionHandlers），本模块只在发送流程运行时
+// 调用它的 isKnownCommand/isKnownSkill/executeFixedCmd（/btw 拦截）。
 import { isKnownCommand, isKnownSkill, executeFixedCmd } from './cmd-palette.js';
 import { parseBtwCommand } from '../core/btw.js';
-import { rememberKnownDir } from './tree.js';
 import { resetUserNav, updateUserNav, shiftUserNavIndex } from './search.js';
 import { cacheMessages, ensurePendingAssistant, renderPendingAssistantPlaceholder, renderCachedMessages, cacheLocalUserMessage, removeLocalUserMessage, prependMessages } from './cache.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
@@ -31,7 +33,7 @@ import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 // 该模块不识 session.js，无循环依赖。
 import { collectKnowledgeRefs, clearKnowledgeRefs, hasKnowledgeRefs } from './knowledge-ref.js';
 // OpenCode v2 适配层：拆 {data:...} 信封、把 v2 扁平消息还原为 v1 的 {info,parts}、转换 prompt 请求体。
-import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, locationQuery, formatApiError } from '../core/v2compat.js';
+import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, formatApiError } from '../core/v2compat.js';
 
 // ============================
 // 全局 Agent/Model 选择器
@@ -198,7 +200,7 @@ export async function loadAgentModelSelectors(dir, force) {
 
 let currentSessionRefreshPending = false;
 
-/** 从 OpenCode API 获取当前会话的最新标题，更新标题栏、_sessionMap 和项目树节点 */
+/** 从 OpenCode API 获取当前会话的最新标题，更新标题栏、store.sessionMap 和项目树节点 */
 export async function refreshSessionTitle() {
     if (!store.currentSessionId) return;
     try {
@@ -208,13 +210,13 @@ export async function refreshSessionTitle() {
         // 标题尚未生成（OpenCode 异步生成，晚于 idle 事件）：直接返回，
         // 由 scheduleSessionTitleRefresh 的轮询持续驱动，避免 tab 页 / 项目树停留在占位名
         if (!title) return;
-        // 从 _sessionMap 读取旧标题（可能因时序问题尚未存在）
-        const oldTitle = window._sessionMap?.[store.currentSessionId]?.title;
+        // 从 store.sessionMap 读取旧标题（可能因时序问题尚未存在）
+        const oldTitle = store.sessionMap?.[store.currentSessionId]?.title;
         if (oldTitle === title) return;
-        // 确保 _sessionMap 存在并更新
-        if (!window._sessionMap) window._sessionMap = {};
-        if (!window._sessionMap[store.currentSessionId]) window._sessionMap[store.currentSessionId] = {};
-        window._sessionMap[store.currentSessionId].title = title;
+        // 确保会话映射表项存在并更新
+        if (!store.sessionMap) store.sessionMap = {};
+        if (!store.sessionMap[store.currentSessionId]) store.sessionMap[store.currentSessionId] = {};
+        store.sessionMap[store.currentSessionId].title = title;
         // 更新会话区标题栏
         document.getElementById('ocChatTitle').textContent = title;
         // 同步 Tab 标题
@@ -263,7 +265,7 @@ function scheduleSessionTitleRefresh(sessionID) {
             return;
         }
         // 标题已从占位值更新为真实标题：停止轮询，避免空转浪费请求
-        const mappedTitle = window._sessionMap?.[sessionID]?.title;
+        const mappedTitle = store.sessionMap?.[sessionID]?.title;
         if (mappedTitle && mappedTitle !== sessionID) {
             clearInterval(titlePollTimer);
             titlePollTimer = null;
@@ -315,8 +317,8 @@ export async function refreshCurrentSession() {
         if (refreshSessionId !== store.currentSessionId) return;
 
         if (!isMobileTreeMode()) {
-            extractSubtaskSummaries(store.currentSessionId);
-            renderSubtaskPanel();
+            // 子任务面板数据源为服务端 child sessions：刷新会话后立即重拉一次
+            refreshSubtaskPanel();
         }
 
         try {
@@ -340,7 +342,7 @@ export async function refreshCurrentSession() {
         showToast('已刷新当前会话', 'success');
     } catch (e) {
         if (refreshSessionId === store.currentSessionId) {
-            showToast('刷新当前会话失败: ' + (e.message || e), 'error');
+            showApiError('刷新当前会话失败: ', e);
         }
     } finally {
         currentSessionRefreshPending = false;
@@ -374,7 +376,7 @@ async function markSessionViewed(sessionId, idle) {
 /** 选择/切换会话：更新标题、目录路径，加载消息和子任务 */
 export async function selectSession(id) {
     if (!id) return;
-    var info = window._sessionMap?.[id];
+    var info = store.sessionMap?.[id];
     // 已打开的 Tab：走 Tab 快速切换（保存快照 + 秒切/分帧渲染）
     if (store.openTabs.some(function(t) { return t.sessionID === id; })) {
         openSessionTab(id, info?.title);
@@ -403,12 +405,13 @@ export async function selectSession(id) {
     markSessionViewed(id, info?.idle);
     document.getElementById('ocChatTitle').textContent = info?.title || id;
     const dirEl = document.getElementById('ocSideDirPath');
-    if (dirEl) {
+    const dirBar = document.getElementById('ocDirBar');
+    if (dirEl && dirBar) {
         var dirPath = info?.directory || '';
         dirEl.textContent = dirPath || id;
         dirEl.title = dirPath || '';
-        dirEl.style.cursor = 'pointer';
-        dirEl.onclick = function() {
+        // path 上的 title 保留为"完整路径"预览（省略号截断时悬浮可见）。
+        dirBar.onclick = function() {
             var p = info?.directory || '';
             if (!p) return;
             // 右侧面板会话目录：点击直接打开独立窗口（桌面端原生窗口 / Web 端新标签页）
@@ -436,8 +439,8 @@ export async function selectSession(id) {
     loadMessages(id).then(() => {
         if (id !== store.currentSessionId) return;
         if (!isMobileTreeMode()) {
-            extractSubtaskSummaries(store.currentSessionId);
-            renderSubtaskPanel();
+            // 子任务面板数据源为服务端 child sessions：选择会话后立即重拉一次
+            refreshSubtaskPanel();
         }
         smartScroll(sessBox || getActiveMessagesEl(), true);
     }).catch(() => {});
@@ -449,7 +452,6 @@ export async function selectSession(id) {
 export async function createSessionWithDir(dir) {
     const res = await api.OpenCodeCall('POST', '/api/session', dir ? { location: { directory: dir } } : {});
     const session = unwrap(res);
-    rememberKnownDir(dir);
     return session;
 }
 
@@ -591,10 +593,6 @@ export async function loadMessages(sessionID) {
         // 残缺缓存永远无法通过刷新校正（只能重开会话），这正是本次修复的根因。
         // 这里继续往下走 API 拉取，用服务端权威数据修正缓存。
         renderMessages(existing, box);
-        if (!isMobileTreeMode()) {
-            extractSubtaskSummaries(targetId);
-            renderSubtaskPanel();
-        }
     } else {
         // 无缓存 = 全新加载（会话被关闭后重开、或刚 fork 出的新会话）：
         // 重置分页状态，防止 closeSessionTab 未清理的 loadedAll 残留（来自关闭前的滚动加载）
@@ -672,20 +670,22 @@ export async function loadMessages(sessionID) {
         // 校正后数据与校正前一致时跳过重渲染，避免多余的全量重建与闪烁
         if (!hasCache || JSON.stringify(after) !== beforeJson) {
             renderMessages(after, box);
-            if (!isMobileTreeMode()) {
-                extractSubtaskSummaries(targetId);
-                renderSubtaskPanel();
-            }
         }
     } catch (e) {
         if (seq !== store.sessionLoadSeq[targetId]) return;
         // 有缓存时校正失败不覆盖已显示内容（保留旧数据优于显示报错）
         if (!hasCache) {
-            box.innerHTML = `<div class="oc-empty error">${escapeHtml(e.message || e)}</div>`;
+            box.innerHTML = `<div class="oc-empty error">${escapeHtml(formatApiError(e))}</div>`;
         }
     } finally {
         clearTimeout(inflightWatchdog);
         loadMessagesInflight[targetId] = false;
+        // 消息加载/校正完成后刷新子任务面板：数据源为服务端 child sessions，
+        // 经节流调度合并高频调用（4 秒轮询 / SSE 补齐 / 用户刷新都会经过这里），
+        // 不再依赖消息缓存——打开或刷新会话后子任务面板必然反映服务端最新列表。
+        if (!isMobileTreeMode()) {
+            scheduleSubtaskExtraction(targetId);
+        }
     }
 }
 
@@ -1156,7 +1156,7 @@ export async function abortSession() {
             updateSendButton();
         });
     } catch (e) {
-        showToast('停止失败: ' + (e.message || e), 'error');
+        showApiError('停止失败: ', e);
     }
     btn.disabled = false;
 }
@@ -1268,7 +1268,7 @@ export async function sendPrompt() {
                 store.currentSessionId = session.id || session.ID;
                 store.activeTabId = store.currentSessionId;
                 // 新建会话自动打开 Tab
-                var newTitle = (window._sessionMap && window._sessionMap[store.currentSessionId] && window._sessionMap[store.currentSessionId].title) || store.currentSessionId;
+                var newTitle = (store.sessionMap && store.sessionMap[store.currentSessionId] && store.sessionMap[store.currentSessionId].title) || store.currentSessionId;
                 openSessionTab(store.currentSessionId, newTitle);
                 // 标题由 OpenCode 异步生成：主动轮询更新 tab/树/标题栏
                 scheduleSessionTitleRefresh(store.currentSessionId);
@@ -1482,3 +1482,18 @@ bindMessagePagingEvents();
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bindMessagePagingEvents, { once: true });
 }
+
+// ============================================================
+// 会话动作注册中心注册
+// events.js / cmd-palette.js 经 core/utils.js 调用以下实现（解环，说明见 core/utils.js）。
+// 函数声明提升保证此处可引用；注册在模块求值期完成，先于任何运行时调用。
+// ============================================================
+setSessionActionHandlers({
+    loadMessages,
+    loadOlderMessages,
+    isSessionLoadedAll,
+    refreshSessionTitle,
+    selectSession,
+    loadAgentModelSelectors,
+    notePromptActivity,
+});

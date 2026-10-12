@@ -84,7 +84,7 @@ if (appTitle) {
 
 loadSidebarCollapseState();
 
-// 左下角版本信息：数据源为 Go 端 appVersion（GetAppVersion）。
+// 左下角版本信息：数据源为 Go 端 appVersion（GetAppVersion，与右侧服务面板"客户端"行同源）。
 // 折叠态元素仅剩图标，版本号通过原生 title 悬浮气泡查看。
 const sidebarVersion = document.getElementById('sidebarVersion');
 const sidebarVersionText = document.getElementById('sidebarVersionText');

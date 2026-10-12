@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"oc-manager/internal/fileutil"
+	"oc-manager/internal/jsonutil"
 	"oc-manager/model"
 )
 
@@ -21,28 +22,16 @@ var providerWriteMu sync.Mutex
 // v1 的 @ai-sdk/* 包在 v2 中统一加 aisdk: 前缀。
 const defaultProviderPackage = "aisdk:@ai-sdk/openai-compatible"
 
-// resolvePath 优先返回 .jsonc 路径，若不存在则回退到 .json。
-func resolvePath(jsoncPath string) string {
-	if _, err := os.Stat(jsoncPath); err == nil {
-		return jsoncPath
-	}
-	jsonPath := strings.TrimSuffix(jsoncPath, ".jsonc") + ".json"
-	if _, err := os.Stat(jsonPath); err == nil {
-		return jsonPath
-	}
-	return jsoncPath
-}
-
 // ========== 供应商配置 ==========
 
-// OpenCodeConfigPath 返回 opencode.jsonc 的完整路径。
+// OpenCodeConfigPath 返回 opencode.jsonc 的完整路径（不存在时回退同名 .json）。
 func OpenCodeConfigPath() string {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir != "" {
-		return resolvePath(filepath.Join(dir, "opencode", "opencode.jsonc"))
+		return fileutil.ResolveJSONC(filepath.Join(dir, "opencode", "opencode.jsonc"))
 	}
 	home, _ := os.UserHomeDir()
-	return resolvePath(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	return fileutil.ResolveJSONC(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
 }
 
 func loadOpenCodeConfig() (*model.OpenCodeConfig, error) {
@@ -125,7 +114,7 @@ func SaveProvider(ps model.ProviderSave) error {
 		for k, v := range old.Settings {
 			settings[k] = v
 		}
-		if opts := rawToMap(old.Extra["options"]); opts != nil {
+		if opts := jsonutil.RawMap(old.Extra["options"]); opts != nil {
 			for k, v := range opts {
 				if _, exists := settings[k]; !exists {
 					settings[k] = v
@@ -134,7 +123,7 @@ func SaveProvider(ps model.ProviderSave) error {
 		}
 		// v1 少数供应商把地址写在 api 字段；迁移为 settings.baseURL（若尚未提供）
 		if _, exists := settings["baseURL"]; !exists {
-			if api := rawToString(old.Extra["api"]); api != "" {
+			if api := jsonutil.RawString(old.Extra["api"]); api != "" {
 				settings["baseURL"] = api
 			}
 		}
@@ -169,7 +158,7 @@ func SaveProvider(ps model.ProviderSave) error {
 				if oldDef := old.Models[m.ID]; oldDef != nil {
 					// 保留真实 modelID：UI 只有单一「模型ID」输入，提交端可能把 modelID 写成 map key；
 					// 若旧定义带有不同的真实 ID，则回填，避免覆盖。
-					if prev := firstNonEmpty(oldDef.ModelID, rawToString(oldDef.Extra["id"])); prev != "" &&
+					if prev := firstNonEmpty(oldDef.ModelID, jsonutil.RawString(oldDef.Extra["id"])); prev != "" &&
 						prev != m.ID && (def.ModelID == "" || def.ModelID == m.ID) {
 						def.ModelID = prev
 					}
@@ -232,7 +221,7 @@ func readConnection(entry *model.ProviderEntry) (baseURL, apiKey string) {
 	}
 	pick(entry.Settings)
 	if baseURL == "" || apiKey == "" {
-		pick(rawToMap(entry.Extra["options"]))
+		pick(jsonutil.RawMap(entry.Extra["options"]))
 	}
 	return baseURL, apiKey
 }
@@ -245,7 +234,7 @@ func readPackage(entry *model.ProviderEntry) string {
 	if entry.Package != "" {
 		return entry.Package
 	}
-	if npm := rawToString(entry.Extra["npm"]); npm != "" {
+	if npm := jsonutil.RawString(entry.Extra["npm"]); npm != "" {
 		// v2 原生包名（@opencode/ai/providers/...）或已带前缀者原样返回
 		if strings.HasPrefix(npm, "aisdk:") || strings.HasPrefix(npm, "@opencode/ai/providers/") {
 			return npm
@@ -283,7 +272,7 @@ func readModels(entry *model.ProviderEntry) []model.ModelInfo {
 			mi.ModelID = def.ModelID
 			if mi.ModelID == "" {
 				// v1 模型把真实 ID 放在 id 字段
-				mi.ModelID = rawToString(def.Extra["id"])
+				mi.ModelID = jsonutil.RawString(def.Extra["id"])
 			}
 			mi.Capabilities = def.Capabilities
 			if mi.Capabilities == nil {
@@ -383,6 +372,18 @@ func providerUseStatements(cfg *model.OpenCodeConfig) []policyStatement {
 	return out
 }
 
+// policyResourceRegistered 判断 provider.use 语句的 resource 是否指向任一托管供应商。
+// resource 按通配模式匹配（语义同 wildcardMatch）；匹配到任一 cfg.Providers 的 key
+// 即视为「已登记」——其启用/禁用一律以 UI 保存的状态为准，手写语句不参与重建。
+func policyResourceRegistered(resource string, cfg *model.OpenCodeConfig) bool {
+	for key := range cfg.Providers {
+		if wildcardMatch(resource, key) {
+			return true
+		}
+	}
+	return false
+}
+
 // isProviderEnabled 综合三种来源计算供应商是否启用（读兼容）：
 //  1. enabled_providers：非空时视为 allowlist，仅列表内供应商可启用；
 //  2. disabled_providers：命中即禁用，优先级高于 allowlist；
@@ -408,6 +409,7 @@ func isProviderEnabled(key string, cfg *model.OpenCodeConfig) bool {
 //   - 集合非空：写 [{action:provider.use,resource:*,effect:deny}] + 每个启用 key 一条 allow；
 //   - 集合为空：移除全部 provider.use 语句（保持「不限制」）；
 //   - 非 provider.use 语句原样保留，相对顺序不变；
+//   - 未登记供应商的 provider.use 语句（resource 不指向任何托管 key）原样保留，追加在重建块之后；
 //   - 不输出空的 policies / experimental 键。
 //
 // override 中的 key 以其给定值作为启用状态（覆盖三源计算结果），
@@ -444,11 +446,18 @@ func rewriteProviderPolicies(cfg *model.OpenCodeConfig, override map[string]bool
 		len(providerUseStatements(cfg)) > 0
 	anyDisabled := len(enabledKeys) < len(cfg.Providers)
 
-	// 保留非 provider.use 语句（provider.use 组将被整体重建）
+	// 保留非 provider.use 语句（provider.use 组将被整体重建）。
+	// 同时单独收集「未登记供应商」的 provider.use 语句：其 resource 不指向任何托管
+	// 供应商（cfg.Providers 的 key），重建不会代理它们的意图，必须原样保留——
+	// 典型场景：手写内置供应商（如 opencode 自带模型）的 allow，否则保存时会被清掉。
 	kept := make([]json.RawMessage, 0, len(policies))
+	var preservedUses []json.RawMessage
 	for _, item := range policies {
 		var st policyStatement
 		if json.Unmarshal(item, &st) == nil && st.Action == "provider.use" {
+			if !policyResourceRegistered(st.Resource, cfg) {
+				preservedUses = append(preservedUses, item)
+			}
 			continue
 		}
 		kept = append(kept, item)
@@ -479,6 +488,10 @@ func rewriteProviderPolicies(cfg *model.OpenCodeConfig, override map[string]bool
 			kept = append(kept, b)
 		}
 	}
+
+	// 未登记供应商的语句追加在生成块之后：语句按数组顺序「最后匹配者胜出」，
+	// 放在 deny * 之后可保证手写的 allow 依然生效（并保持它们原有的相对顺序）。
+	kept = append(kept, preservedUses...)
 
 	if len(kept) > 0 {
 		b, err := json.Marshal(kept)
@@ -569,30 +582,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-// rawToString 把 json.RawMessage 解析为字符串；失败或空返回 ""。
-func rawToString(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) != nil {
-		return ""
-	}
-	return s
-}
-
-// rawToMap 把 json.RawMessage 解析为 map[string]interface{}；失败返回 nil。
-func rawToMap(raw json.RawMessage) map[string]interface{} {
-	if len(raw) == 0 {
-		return nil
-	}
-	var m map[string]interface{}
-	if json.Unmarshal(raw, &m) != nil {
-		return nil
-	}
-	return m
 }
 
 // containsFold 大小写不敏感地判断 key 是否在 list 中。

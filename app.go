@@ -121,28 +121,18 @@ func (a *App) GetSkillConfig() model.SkillConfigResult {
 	}
 }
 
-// GetSkills 返回所有技能及其在各平台的链接状态。
-func (a *App) GetSkills() []model.SkillInfo {
-	return a.sm.GetAllSkills()
-}
-
-// GetAggregatedSkills 返回所有技能的聚合列表：
+// getAggregatedSkills 返回所有技能的聚合列表（仅 App 内部使用）：
 // 1. 从配置读取来源目录
 // 2. 扫描所有来源目录
 // 3. 扫描全局目录
 // 4. 合并返回完整列表
 // 当没有配置来源目录时，回退到原有的 GetAllSkills 扫描逻辑。
-func (a *App) GetAggregatedSkills() []model.SkillInfo {
+func (a *App) getAggregatedSkills() []model.SkillInfo {
 	dirs, err := skill.ListSourceDirs()
 	if err != nil || len(dirs) == 0 {
 		return a.sm.GetAllSkills()
 	}
 	return a.sm.ScanWithGlobal(dirs)
-}
-
-// GetSourceDir 返回技能源目录路径。
-func (a *App) GetSourceDir() string {
-	return a.sm.SourceDir()
 }
 
 // GetDirEnabledSkills 返回指定来源目录中当前已启用的技能名称列表。
@@ -159,6 +149,11 @@ func (a *App) ListBrowsableDirs(path string) ([]model.DirectoryEntry, error) {
 // ListBrowserFiles 返回站内文件浏览器目录列表。
 func (a *App) ListBrowserFiles(rootDir, path string) (model.FileBrowserListResult, error) {
 	return filebrowser.ListBrowserFiles(rootDir, path)
+}
+
+// SearchBrowserFiles 在会话目录内做文件内容搜索（类 VSCode 全局搜索）。
+func (a *App) SearchBrowserFiles(rootDir, path, query string, caseSensitive, useRegex, wholeWord bool) (model.FileBrowserSearchResult, error) {
+	return filebrowser.SearchBrowserFiles(rootDir, path, query, caseSensitive, useRegex, wholeWord)
 }
 
 // StatBrowserFile 返回站内文件浏览器文件信息。
@@ -189,6 +184,16 @@ func (a *App) UploadBrowserFile(rootDir, path, fileName, base64Data string, over
 // CreateBrowserDir 在当前文件浏览器目录下创建文件夹。
 func (a *App) CreateBrowserDir(rootDir, path, dirName string) (model.SaveResult, error) {
 	return filebrowser.CreateBrowserDir(rootDir, path, dirName)
+}
+
+// CreateBrowserFile 在文件浏览器指定目录下创建空文件。
+func (a *App) CreateBrowserFile(rootDir, path, dirName string) (model.SaveResult, error) {
+	return filebrowser.CreateBrowserFile(rootDir, path, dirName)
+}
+
+// RenameBrowserEntry 重命名文件浏览器中的文件或目录。
+func (a *App) RenameBrowserEntry(rootDir, path, newName string) (model.SaveResult, error) {
+	return filebrowser.RenameBrowserEntry(rootDir, path, newName)
 }
 
 // DeleteBrowserEntry 删除文件浏览器中的文件或目录。
@@ -288,13 +293,6 @@ func (a *App) OpenURL(url string) {
 	}
 }
 
-// GetStats 返回统计信息。
-func (a *App) GetStats() model.Stats {
-	return model.Stats{
-		GlobalSkills: len(a.sm.GetAllSkills()),
-	}
-}
-
 // ToggleSkill 切换技能链接状态。
 func (a *App) ToggleSkill(skillPath, skillName string, enable bool) model.ToggleResult {
 	newState, err := a.sm.ToggleSkill(skillPath, skillName, enable)
@@ -342,20 +340,11 @@ func (a *App) RemoveSkillSourceDir(dir string) model.SaveResult {
 	return model.SaveResult{Success: true}
 }
 
-// GetSkillSourceDirs 返回当前配置中所有技能源目录。
-func (a *App) GetSkillSourceDirs() []string {
-	dirs, err := skill.ListSourceDirs()
-	if err != nil {
-		return []string{}
-	}
-	return dirs
-}
-
 // SaveSkillScheme 保存当前已启用的技能为方案。
 // 从聚合列表中筛选出 Linked=true 的技能，保存其名称列表。
 func (a *App) SaveSkillScheme(name string) model.SaveResult {
 	// 获取当前聚合技能列表
-	skills := a.GetAggregatedSkills()
+	skills := a.getAggregatedSkills()
 	var names []string
 	for _, s := range skills {
 		if s.Linked {
@@ -379,7 +368,7 @@ func (a *App) ApplySkillScheme(name string) model.SchemeApplyResult {
 		}
 	}
 	// 2. 获取聚合技能列表
-	available := a.GetAggregatedSkills()
+	available := a.getAggregatedSkills()
 	// 3. 获取来源目录
 	sourceDirs, _ := skill.ListSourceDirs()
 	// 4. 应用方案
@@ -417,20 +406,6 @@ func (a *App) SaveSlimConfig(payload omo.SlimSavePayload) model.SaveResult {
 		return model.SaveResult{Success: false, Error: err.Error()}
 	}
 	return model.SaveResult{Success: true}
-}
-
-// GetSlimConfigPath 返回 oh-my-opencode-slim 配置文件路径。
-func (a *App) GetSlimConfigPath() string {
-	return omo.SlimConfigPath()
-}
-
-// GetSlimAgentDescriptions 返回 OMO Slim 的 agent 描述表。
-func (a *App) GetSlimAgentDescriptions() map[string]string {
-	descs, err := omo.LoadSlimAgentDescriptions()
-	if err != nil {
-		return map[string]string{}
-	}
-	return descs
 }
 
 // GetProviderConfigPath 返回供应商配置文件路径。
@@ -499,11 +474,6 @@ func (a *App) OpenCodeAPI(method, path, body string) model.APIResult {
 // AnswerQuestion 回答 question 工具调用（answers 为按问题顺序的二维数组）。
 func (a *App) AnswerQuestion(sessionID string, answers [][]string) model.APIResult {
 	return opencode.AnswerQuestion(sessionID, answers)
-}
-
-// RejectQuestion 忽略 question 工具调用。
-func (a *App) RejectQuestion(sessionID string) model.APIResult {
-	return opencode.RejectQuestion(sessionID)
 }
 
 // GetProjectTree 获取项目→目录→会话的树形结构 JSON。
@@ -593,6 +563,11 @@ func (a *App) StopFrontendWeb() model.WebResult {
 // GetFrontendWebStatus 返回页面访问服务状态。
 func (a *App) GetFrontendWebStatus(hostname string, port int) model.WebResult {
 	return web.FrontendWebStatus(hostname, port)
+}
+
+// GetLanIPv4 返回本机局域网 IPv4 地址（Web服务默认监听地址与二维码使用）。
+func (a *App) GetLanIPv4() string {
+	return web.GetLanIPv4()
 }
 
 // GetCommands 返回所有常用命令分组数据。
@@ -745,10 +720,60 @@ func (a *App) KnowledgeConvert(req model.ConvertRequest) (string, error) {
 }
 
 // appVersion 是 OC Manager 客户端自身的版本号（与右侧服务面板展示的 opencode
-// 服务端版本区分）。单一来源：前端通过 GetAppVersion 读取。
+// 服务端版本区分）。单一来源：前端通过 GetAppVersion 读取；build/config.yml 的
+// info.version 保持同步（当前 1.8.3）。
 const appVersion = "1.8.3"
 
 // GetAppVersion 返回 OC Manager 客户端版本号（侧边栏左下角展示）。
 func (a *App) GetAppVersion() string {
 	return appVersion
+}
+
+// ============================================================================
+// V2 功能绑定（技能 / slim 配置 / 统计 / 提问拒绝）——合并 upstream 后恢复
+// ============================================================================
+
+// GetSkills 返回所有技能及其在各平台的链接状态。
+func (a *App) GetSkills() []model.SkillInfo {
+	return a.sm.GetAllSkills()
+}
+
+// GetSkillSourceDirs 返回当前配置中所有技能源目录。
+func (a *App) GetSkillSourceDirs() []string {
+	dirs, err := skill.ListSourceDirs()
+	if err != nil {
+		return []string{}
+	}
+	return dirs
+}
+
+// GetSlimAgentDescriptions 返回 OMO Slim 的 agent 描述表。
+func (a *App) GetSlimAgentDescriptions() map[string]string {
+	descs, err := omo.LoadSlimAgentDescriptions()
+	if err != nil {
+		return map[string]string{}
+	}
+	return descs
+}
+
+// GetSlimConfigPath 返回 oh-my-opencode-slim 配置文件路径。
+func (a *App) GetSlimConfigPath() string {
+	return omo.SlimConfigPath()
+}
+
+// GetSourceDir 返回技能源目录路径。
+func (a *App) GetSourceDir() string {
+	return a.sm.SourceDir()
+}
+
+// GetStats 返回统计信息。
+func (a *App) GetStats() model.Stats {
+	return model.Stats{
+		GlobalSkills: len(a.sm.GetAllSkills()),
+	}
+}
+
+// RejectQuestion 忽略 question 工具调用。
+func (a *App) RejectQuestion(sessionID string) model.APIResult {
+	return opencode.RejectQuestion(sessionID)
 }

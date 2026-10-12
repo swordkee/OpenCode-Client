@@ -235,7 +235,7 @@ func TestUnwrapSessionData(t *testing.T) {
 // 因此这里锁住「idle 会被解析并透出」，避免有人精简结构时把它删掉。
 func TestUnmarshalSessionListKeepsIdle(t *testing.T) {
 	body := `{"data":[{"id":"ses_1","time":{"created":1000,"updated":2000,"idle":1790605979558}}]}`
-	got, err := unmarshalSessionList([]byte(body))
+	got, _, err := unmarshalSessionList([]byte(body))
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestUnmarshalSessionListKeepsIdle(t *testing.T) {
 // 从未空闲过的会话本来就没有 idle 值。
 func TestUnmarshalSessionListIdleOmitted(t *testing.T) {
 	body := `{"data":[{"id":"ses_1","time":{"created":1000,"updated":2000}}]}`
-	got, err := unmarshalSessionList([]byte(body))
+	got, _, err := unmarshalSessionList([]byte(body))
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestUnmarshalSessionList(t *testing.T) {
 		{"空信封", `{"data":[]}`, 0},
 	}
 	for _, c := range cases {
-		got, err := unmarshalSessionList([]byte(c.body))
+		got, _, err := unmarshalSessionList([]byte(c.body))
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -280,7 +280,7 @@ func TestUnmarshalSessionList(t *testing.T) {
 		}
 	}
 
-	if _, err := unmarshalSessionList([]byte("not json")); err == nil {
+	if _, _, err := unmarshalSessionList([]byte("not json")); err == nil {
 		t.Errorf("非法 JSON 应返回错误")
 	}
 }
@@ -344,7 +344,7 @@ func TestUnmarshalSessionListKeepsParentID(t *testing.T) {
 		{"id":"ses_kid","title":"子代理会话","parentID":"ses_root"},
 		{"id":"ses_grand","title":"孙会话","parentID":"ses_kid"}
 	]}`
-	list, err := unmarshalSessionList([]byte(body))
+	list, _, err := unmarshalSessionList([]byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,108 +382,6 @@ func TestBasicAuthValue(t *testing.T) {
 	want := "Basic b3BlbmNvZGU6c2VjcmV0" // base64("opencode:secret")
 	if got != want {
 		t.Errorf("basicAuthValue = %q, 期望 %q", got, want)
-	}
-}
-
-// TestServiceInfoMatches 覆盖注册文件与目标地址的匹配。
-func TestServiceInfoMatches(t *testing.T) {
-	cases := []struct {
-		name string
-		info *serviceInfo
-		host string
-		port int
-		want bool
-	}{
-		{"完全匹配", &serviceInfo{URL: "http://127.0.0.1:49374"}, "127.0.0.1", 49374, true},
-		{"端口不同", &serviceInfo{URL: "http://127.0.0.1:49374"}, "127.0.0.1", 4096, false},
-		{"主机大小写不同", &serviceInfo{URL: "http://LocalHost:4096"}, "localhost", 4096, true},
-		{"https 协议", &serviceInfo{URL: "https://127.0.0.1:4096"}, "127.0.0.1", 4096, true},
-		{"尾斜杠", &serviceInfo{URL: "http://127.0.0.1:4096/"}, "127.0.0.1", 4096, true},
-		{"URL 为空", &serviceInfo{}, "127.0.0.1", 4096, false},
-		{"info 为 nil", nil, "127.0.0.1", 4096, false},
-		{"无端口", &serviceInfo{URL: "http://127.0.0.1"}, "127.0.0.1", 4096, false},
-
-		// ↓↓ v2.0.24 兼容：service.json 的 url 改写成绑定地址 0.0.0.0 ↓↓
-		// 回归用例：真实故障是「会话列表全空」——口令取不到 → 401 → 什么都读不出。
-		{"绑定地址 0.0.0.0 对回环探测（v2.0.24 实测场景）",
-			&serviceInfo{URL: "http://0.0.0.0:4096"}, "127.0.0.1", 4096, true},
-		{"绑定地址 0.0.0.0 对 localhost", &serviceInfo{URL: "http://0.0.0.0:4096"}, "localhost", 4096, true},
-		// IPv6 未指定地址
-		{"绑定地址 [::] 对回环", &serviceInfo{URL: "http://[::]:4096"}, "127.0.0.1", 4096, true},
-		{"绑定地址 [::] 对 ::1", &serviceInfo{URL: "http://[::]:4096"}, "::1", 4096, true},
-		// 回环族互认（旧实现的注释声称支持、代码并未实现）
-		{"localhost 对 127.0.0.1", &serviceInfo{URL: "http://localhost:4096"}, "127.0.0.1", 4096, true},
-		{"127.0.0.1 对 localhost", &serviceInfo{URL: "http://127.0.0.1:4096"}, "localhost", 4096, true},
-		{"127.0.0.2 仍是回环", &serviceInfo{URL: "http://127.0.0.2:4096"}, "127.0.0.1", 4096, true},
-		// 反例：绑定地址不得匹配远程主机，否则会把本机口令用到远端同端口服务上
-		{"绑定地址 0.0.0.0 对远程 IP（必须不匹配）",
-			&serviceInfo{URL: "http://0.0.0.0:4096"}, "192.168.1.50", 4096, false},
-		{"绑定地址 0.0.0.0 对远程域名（必须不匹配）",
-			&serviceInfo{URL: "http://0.0.0.0:4096"}, "example.com", 4096, false},
-		{"不同远程主机（必须不匹配）",
-			&serviceInfo{URL: "http://10.0.0.5:4096"}, "10.0.0.6", 4096, false},
-		{"端口不同时绑定地址也不匹配", &serviceInfo{URL: "http://0.0.0.0:4096"}, "127.0.0.1", 5000, false},
-	}
-	for _, c := range cases {
-		if got := serviceInfoMatches(c.info, c.host, c.port); got != c.want {
-			t.Errorf("%s: serviceInfoMatches = %v, 期望 %v", c.name, got, c.want)
-		}
-	}
-}
-
-// TestStartPasswordRe 覆盖从 serve 启动输出解析口令。
-func TestStartPasswordRe(t *testing.T) {
-	out := "server listening on http://127.0.0.1:41999\nserver password xWV63BgTpM11QtDql1YXVN33MU5XVM_l3iNEafmL-Q0\n"
-	m := startPasswordRe.FindStringSubmatch(out)
-	if m == nil {
-		t.Fatal("未匹配到 server password")
-	}
-	if m[1] != "xWV63BgTpM11QtDql1YXVN33MU5XVM_l3iNEafmL-Q0" {
-		t.Errorf("口令 = %q", m[1])
-	}
-	// 未打印口令时不应误匹配（例如把 URL 当口令）
-	if startPasswordRe.FindStringSubmatch("server listening on http://127.0.0.1:41999\n") != nil {
-		t.Errorf("仅有 listening 行时不应匹配出口令")
-	}
-}
-
-// TestSetServerPasswordFallback 覆盖用户手工口令的优先级。
-// 通过 XDG_STATE_HOME 注入一份真实的注册文件，不使用测试专用钩子。
-func TestSetServerPasswordFallback(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
-	t.Cleanup(func() { SetServerPassword("") })
-
-	regPath := serviceRegistrationPath()
-	if err := os.MkdirAll(filepath.Dir(regPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	reg := `{"id":"x","version":"2.0.15","url":"http://127.0.0.1:4096","pid":1,"password":"from-registry"}`
-	if err := os.WriteFile(regPath, []byte(reg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 1) 未设手工口令时从注册文件取
-	SetServerPassword("")
-	if got := discoverServerPassword("127.0.0.1", 4096); got != "from-registry" {
-		t.Errorf("应从注册文件取到口令，实际 %q", got)
-	}
-	// 2) 地址不匹配则不返回
-	if got := discoverServerPassword("127.0.0.1", 9999); got != "" {
-		t.Errorf("地址不匹配应返回空，实际 %q", got)
-	}
-	// 3) 手工口令优先于注册文件
-	SetServerPassword("  user-provided  ")
-	if got := configuredPassword(); got != "user-provided" {
-		t.Errorf("手工口令应去除首尾空白，实际 %q", got)
-	}
-	if got := discoverServerPassword("127.0.0.1", 4096); got != "user-provided" {
-		t.Errorf("手工口令应优先，实际 %q", got)
-	}
-	// 4) 清空后回落到注册文件
-	SetServerPassword("")
-	if got := discoverServerPassword("127.0.0.1", 4096); got != "from-registry" {
-		t.Errorf("清空后应回落到注册文件，实际 %q", got)
 	}
 }
 

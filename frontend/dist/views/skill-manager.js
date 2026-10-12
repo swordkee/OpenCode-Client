@@ -2,7 +2,7 @@
 // 说明：ES Modules 化改造。core 层依赖静态导入；filebrowser 依赖
 // 暂以 typeof 守卫调用，待 filebrowser 改造完成后改为静态 import。
 import { api } from '../core/apicall.js';
-import { escapeHtml, showToast, isBrowserRuntimeForMain } from '../core/utils.js';
+import { escapeHtml, showToast, showApiError, isBrowserRuntimeForMain } from '../core/utils.js';
 import { store } from '../core/state.js';
 import { openFileBrowserModal } from '../filebrowser/browser.js';
 import { openDirBrowserModal } from '../filebrowser/dir.js';
@@ -23,7 +23,9 @@ var skillSchemes = [];
 var applyingScheme = '';
 
 // 配置区使用的内联 SVG 图标（禁用 emoji，统一线性 stroke 风格）
-var CFG_ICON_FOLDER = '<svg class="cfg-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>';
+// 文件夹图标改用 assets/文件夹.svg 遮罩（mask 机制，.oc-fb-icon 基类在 style.css）；
+// 尺寸由 #view-skills .cfg-folder-icon 覆盖为 14px（对齐原 .cfg-i）
+var CFG_ICON_FOLDER = '<span class="oc-fb-icon oc-fb-icon-folder cfg-folder-icon" aria-hidden="true"></span>';
 var CFG_ICON_X = '<svg class="cfg-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
 // 方案书签图标：与来源目录的文件夹图标对应，用于方案 chip 主体
 var CFG_ICON_BOOKMARK = '<svg class="cfg-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
@@ -52,7 +54,7 @@ export async function loadSkillsData() {
         await loadSkillSchemes();
     } catch (err) {
         store.skillsLoaded = false;
-        showToast('加载技能数据失败: ' + (err.message || err), 'error');
+        showApiError('加载技能数据失败: ', err);
     }
 }
 
@@ -223,7 +225,7 @@ export async function handleSkillManagerActionClick(event) {
         } catch (e) {
             // 失败时回滚 checkbox 并提示
             target.checked = !enable;
-            showToast('操作失败: ' + (e.message || e), 'error');
+            showApiError('操作失败: ', e);
         }
         return;
     }
@@ -248,7 +250,7 @@ export async function openSkillDir(skillPath) {
     try {
         openFileBrowserModal(skillPath);
     } catch (e) {
-        showToast('打开技能目录失败: ' + (e.message || e), 'error');
+        showApiError('打开技能目录失败: ', e);
     }
 }
 
@@ -363,7 +365,7 @@ export async function performAddSourceDir(dir) {
         store.skillsLoaded = false;
         await loadSkillsData();
     } catch (err) {
-        showToast('添加目录失败: ' + (err.message || err), 'error');
+        showApiError('添加目录失败: ', err);
     }
 }
 
@@ -392,7 +394,7 @@ export async function removeSourceDir(dir) {
         store.skillsLoaded = false;
         await loadSkillsData();
     } catch (err) {
-        showToast('删除目录失败: ' + (err.message || err), 'error');
+        showApiError('删除目录失败: ', err);
     }
 }
 
@@ -413,7 +415,7 @@ export async function openSelectedSourceDir(dir) {
     try {
         await api.OpenDir(dir);
     } catch (err) {
-        showToast('打开目录失败: ' + (err.message || err), 'error');
+        showApiError('打开目录失败: ', err);
     }
 }
 
@@ -451,7 +453,7 @@ export async function saveSkillScheme() {
         // 保存只是新增一份配方，不等于已应用，也不存在「当前方案」需要维护
         await loadSkillSchemes();
     } catch (err) {
-        showToast('保存方案失败: ' + (err.message || err), 'error');
+        showApiError('保存方案失败: ', err);
     }
 }
 
@@ -472,7 +474,7 @@ export async function deleteSkillScheme(name) {
         // 删除只是移除一份配方；不涉及「当前方案」状态（本就不存在该状态）
         await loadSkillSchemes();
     } catch (err) {
-        showToast('删除方案失败: ' + (err.message || err), 'error');
+        showApiError('删除方案失败: ', err);
     }
 }
 
@@ -503,7 +505,7 @@ export async function applySkillScheme(name) {
         store.skillsLoaded = false;
         await loadSkillsData();
     } catch (err) {
-        showToast('应用方案失败: ' + (err.message || err), 'error');
+        showApiError('应用方案失败: ', err);
     } finally {
         // 无论成败都退出忙碌态，恢复 chip 可点击
         applyingScheme = '';

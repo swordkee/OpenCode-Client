@@ -69,23 +69,6 @@ export function formatApiError(e) {
 // 路径：v1 → v2
 // ============================
 
-const enc = encodeURIComponent;
-
-/** 会话目录作用域查询串。v1 用 ?directory=，v2 统一为 ?directory=。 */
-export function dirQuery(directory) {
-    return directory ? '?directory=' + enc(directory) : '';
-}
-
-/**
- * v2 中 /api/agent、/api/model、/api/command、/api/mcp、/api/config、/api/form
- * 等端点的作用域参数是 `location`，且为 **deepObject** 风格
- * （style=deepObject, explode=true），必须编码成 `location[directory]=...`。
- * 写成 `location=...` 会被服务端忽略，列表就退回服务端 CWD 而非当前会话目录。
- */
-export function locationQuery(directory) {
-    return directory ? '?location%5Bdirectory%5D=' + enc(directory) : '';
-}
-
 /** 把 v1 的 prompt 请求体转换为 v2 的 {text, files, agents, ...} 形态。
  *  v1 发送 {parts:[{type:'text',text},{type:'file',...}], model, variant, agent}；
  *  v2 改为顶层 text + files/agents/skills，且**不再随 prompt 提交 model/agent**——
@@ -358,6 +341,21 @@ function filePartFromAttachment(f, sessionID, messageID, id) {
     return part;
 }
 
+/** 剥离服务端 synthetic 正文的包装标签：`<subagent ...>…</subagent>` 外层与 `<summary>` 包裹。
+ *  服务端落库文本形如 `<subagent ...>\n<summary>\n报告（markdown）\n</subagent>`，其中
+ *  `<summary>` 常未闭合——HTML 解析时会把后续所有内容吞进 summary 元素、导致正文被"压平"
+ *  （标题/列表等块级结构全部丢失、连成一段）。在适配层剥离包装，正文保持原始 markdown，
+ *  交给 render.js 的 renderTextPart（marked + 白名单清洗）正常渲染。
+ *  只锚定首尾，不误伤正文内部的同类标签。 */
+function stripSyntheticWrapper(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/^\s*<subagent\b[^>]*>\s*/i, '')
+        .replace(/<\/subagent>\s*$/i, '')
+        .replace(/^\s*<summary>\s*/i, '')
+        .replace(/<\/summary>\s*$/i, '');
+}
+
 /** v2 的单条消息 → v1 的 {info, parts}。 */
 function adaptMessage(msg, sessionID) {
     if (!msg || !msg.id) return null;
@@ -405,13 +403,32 @@ function adaptMessage(msg, sessionID) {
         return { info, parts };
     }
 
+    // synthetic 合成通知（子任务完成 / 回复中断自动继续 / 未来其它）：v2 的 synthetic
+    // 消息统一渲染为通用折叠通知块（render.js buildSyntheticNoticeCard），不做 source 专用识别。
+    // description 作为摘要行文案（info.syntheticNotice.description），
+    // metadata.state 作为摘要行状态（completed / failed / interrupted，其它值原样显示）；
+    // 正文只放 text（description 不再拼进正文，避免与摘要行重复）。
+    // 完全无 text 也无 description 的 synthetic 仍丢弃（与旧行为一致，避免空卡片）。
+    if (msg.type === 'synthetic') {
+        // 剥离服务端包装（<subagent ...>/<summary>）——正文保持 markdown，交由渲染层正常渲染
+        const body = stripSyntheticWrapper(msg.text);
+        if (!body && !msg.description) return null;
+        info.role = 'system'; // 保持 system 角色（渲染分发用；卡片外观仍是系统卡）
+        // 标记字段，供渲染层统一识别并渲染为通用折叠通知块
+        info.syntheticNotice = {
+            description: msg.description || '', // 摘要行后缀（有值时显示「系统通知：<description>」）
+            state: (msg.metadata && msg.metadata.state) || '', // 摘要行右侧状态；无 metadata/state 则不显示
+        };
+        return { info, parts: [{ id: msg.id + '_text', messageID: msg.id, sessionID, type: 'text', text: body }] };
+    }
+
     // v2 除 user/assistant 外还有若干消息类型。idle 是状态边界标记，必须丢弃
     // （否则界面上出现空卡片）；agent/model/location-switched 只是 UI 状态切换，
     // 没有可渲染内容，同样丢弃。其余类型按下表还原。
     switch (msg.type) {
-        case 'system':
-        case 'synthetic': {
+        case 'system': {
             // {id, time, type, text, description?} —— 服务端注入的说明性消息
+            // （instructions 更新通知等普通系统消息；synthetic 已在上方分支统一处理）
             const text = [msg.description, msg.text].filter(Boolean).join('\n');
             if (!text) return null;
             info.role = 'system';
@@ -481,13 +498,6 @@ export function nextCursor(res) {
     return res && typeof res === 'object' ? (res.cursor?.next || null) : null;
 }
 
-/** 从 v2 消息列表响应中取出「反向一页」的游标（默认 desc 顺序下指向更新）。
- *  注意：它**不是**「更早一页」的游标——加载更早历史必须用 nextCursor，
- *  误用本函数会让上滑分页请求被服务端解成空页（历史 bug 的根源）。 */
-export function prevCursor(res) {
-    return res && typeof res === 'object' ? (res.cursor?.previous || null) : null;
-}
-
 // ============================
 // 内部指令/合成消息判定（渲染层过滤用）
 // ============================
@@ -546,6 +556,13 @@ export function adaptEvent(event) {
     if (event.type.startsWith('permission.') || event.type.startsWith('form.')) {
         return [event];
     }
+
+    // —— MCP 运行时事件（连接状态 / 工具列表 / 资源列表变化）：
+    // v1 没有对应形态，但服务面板需要据此刷新 MCP 状态（见 chat/events.js 的防抖刷新），
+    // 因此原样透传而不是落入 default 被丢弃。
+    if (event.type === 'mcp.status.changed' || event.type === 'mcp.tools.changed' || event.type === 'mcp.resources.changed') {
+        return [event];
+    }
     if (event.type === 'session.deleted' || event.type === 'session.created') {
         return [event];
     }
@@ -572,10 +589,11 @@ export function adaptEvent(event) {
                 role: 'assistant',
                 agent: data.agent,
                 model: data.model,
-                time: { created: data.started || event.created },
+                time: { created: data.started || event.created, completed: undefined },
                 // v2 在重试/继续时会对同一消息重发 step.started，并在服务端把上一次的
                 // error / finish 等清空（message-updater 的 step.started 分支）。前端缓存
-                // 是浅合并，必须显式带 error: undefined 才能清掉残留的错误卡片。
+                // 的 info 是浅合并（time 为深合并），必须显式带 error / completed: undefined
+                // 才能清掉残留的错误卡片与完成时间（否则旧 completed 会让新消息被误判为已完成）。
                 error: undefined,
             };
             // v2 的 model 是 Model.Ref = {id, providerID, variant?}，而 render.js
@@ -757,18 +775,27 @@ export function adaptEvent(event) {
             }];
         }
 
-        // 合成消息（如「不完整流继续」提示）：服务端也会把它落库为 synthetic 消息，
+        // 合成通知（子任务完成 / 回复中断自动继续等）：服务端也会把它落库为 synthetic 消息，
         // 消息 id = msg_<事件 id>（message-updater 的 SessionMessage.ID.fromEvent），
         // 这里用同一规则生成，保证随后历史刷新按 id 合并、不重复。
-        // 正文与 adaptMessage 的 synthetic 分支同构（description + text）。
+        // 必须与 adaptMessage 的 synthetic 分支同构：info 带 syntheticNotice（description +
+        // metadata.state）、正文只放 text（不拼 description）——否则实时渲染与历史刷新后的
+        // 通用折叠通知块不一致，且 mergePart 的长文本保护会让正文残留 description。
         case 'session.synthetic': {
             const msgID = messageIDFromEvent(event);
             if (!msgID) return [];
-            const text = [data.description, data.text].filter(Boolean).join('\n');
-            if (!text) return [];
+            // 与历史路径同构：剥离服务端包装标签（<subagent ...>/<summary>），正文保持 markdown
+            const body = stripSyntheticWrapper(data.text);
+            if (!body && !data.description) return [];
             return [
-                { type: 'message.updated', info: { id: msgID, sessionID, role: 'system', time: { created: event.created } } },
-                { type: 'message.part.updated', part: { id: msgID + '_text', messageID: msgID, sessionID, type: 'text', text } },
+                { type: 'message.updated', info: {
+                    id: msgID, sessionID, role: 'system', time: { created: event.created },
+                    syntheticNotice: {
+                        description: data.description || '',
+                        state: (data.metadata && data.metadata.state) || '',
+                    },
+                } },
+                { type: 'message.part.updated', part: { id: msgID + '_text', messageID: msgID, sessionID, type: 'text', text: body } },
             ];
         }
 

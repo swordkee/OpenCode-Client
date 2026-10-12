@@ -21,9 +21,9 @@
 // ============================================================
 import { api } from '../core/apicall.js';
 import { openFileBrowserModal } from '../filebrowser/browser.js';
-import { showToast, bindOverlayClose } from '../core/utils.js';
+import { showToast, escapeAttr, bindOverlayClose } from '../core/utils.js';
 import { store, currentDir } from '../core/state.js';
-import { toModelOptions } from '../core/v2compat.js';
+import { toModelOptions, formatApiError } from '../core/v2compat.js';
 
 // ========== 视图状态（全部由 loadModelConfig 填充） ==========
 export let slimPath = '';           // 配置文件路径
@@ -50,16 +50,6 @@ export const SLIM_VARIANT_OPTIONS = ['', 'minimal', 'low', 'medium', 'high', 'xh
 
 // ========== 小工具 ==========
 
-/** HTML 转义（统一处理文本与属性两种上下文，防止方案名/模型值里的特殊字符破坏结构） */
-function esc(value) {
-    return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
 /** 模型下拉选项 HTML：当前值不在已知列表时补入（沿用原「不吞掉配置文件现值」的做法） */
 function modelOptionsHtml(current) {
     const models = store.availableModels && store.availableModels.length
@@ -71,7 +61,7 @@ function modelOptionsHtml(current) {
     if (!models.length) return '<option value="">（无可用模型）</option>';
     return models.map(m => {
         const selected = m.value === current ? ' selected' : '';
-        return `<option value="${esc(m.value)}"${selected}>${esc(m.label)}</option>`;
+        return `<option value="${escapeAttr(m.value)}"${selected}>${escapeAttr(m.label)}</option>`;
     }).join('');
 }
 
@@ -81,7 +71,7 @@ function variantOptionsHtml(current) {
     if (current && !options.includes(current)) options.push(current);
     return options.map(v => {
         const selected = v === current ? ' selected' : '';
-        return `<option value="${esc(v)}"${selected}>${v === '' ? '（空）' : esc(v)}</option>`;
+        return `<option value="${escapeAttr(v)}"${selected}>${v === '' ? '（空）' : escapeAttr(v)}</option>`;
     }).join('');
 }
 
@@ -116,7 +106,7 @@ export async function loadModelConfig() {
 
         renderModelConfig();
     } catch (err) {
-        container.innerHTML = `<div class="error"><p>⚠️ 加载失败</p><p class="error-detail">${esc(err.message || err)}</p><button class="btn btn-primary" id="btnRetryOmoLoad">重试</button></div>`;
+        container.innerHTML = `<div class="error"><p>⚠️ 加载失败</p><p class="error-detail">${escapeAttr(formatApiError(err))}</p><button class="btn btn-primary" id="btnRetryOmoLoad">重试</button></div>`;
         const retryBtn = container.querySelector('#btnRetryOmoLoad');
         if (retryBtn) retryBtn.addEventListener('click', loadModelConfig);
     }
@@ -223,7 +213,7 @@ export function renderModelConfig() {
         clearBatchBar();
         const err = document.createElement('div');
         err.className = 'error';
-        err.innerHTML = `<p>⚠️ 配置文件解析失败</p><p class="error-detail">${esc(parseError)}</p><p class="error-detail">${esc(slimPath)}</p>`;
+        err.innerHTML = `<p>⚠️ 配置文件解析失败</p><p class="error-detail">${escapeAttr(parseError)}</p><p class="error-detail">${escapeAttr(slimPath)}</p>`;
         container.appendChild(err);
         updateSaveStatus();
         return;
@@ -234,7 +224,7 @@ export function renderModelConfig() {
     // 3) 空状态：文件不存在且没有任何方案（仍可用底部「新增方案」创建）
     if (!slimExists && visiblePresets.length === 0) {
         clearBatchBar();
-        container.innerHTML = '<div class="empty"><p>📭 未找到 oh-my-opencode-slim 配置文件</p><p class="empty-hint">点击底部「➕ 新增方案」创建第一个方案，保存后自动创建配置文件</p></div>';
+        container.innerHTML = '<div class="empty"><p>📭 未找到 oh-my-opencode-slim 配置文件</p><p class="empty-hint">点击底部「新增方案」创建第一个方案，保存后自动创建配置文件</p></div>';
         updateSaveStatus();
         return;
     }
@@ -428,12 +418,26 @@ function createPresetGroup(preset) {
     const body = document.createElement('div');
     body.className = 'model-group-body' + (preset.collapsed ? ' collapsed' : '');
 
-    // 点击组头空白处折叠 / 展开（radio、按钮、全选区域不触发）
+    // 点击组头空白处折叠 / 展开（radio、按钮、全选区域不触发）。
+    const GROUP_BODY_ANIM_MS = 300;
     header.addEventListener('click', (e) => {
         if (e.target.closest('input, button, .model-group-actions')) return;
         preset.collapsed = !preset.collapsed;
         header.classList.toggle('collapsed');
-        body.classList.toggle('collapsed');
+        if (preset.collapsed) {
+            // 折叠：钉住当前实际高度为起点 → reflow → 切类过渡到 0
+            body.style.maxHeight = body.scrollHeight + 'px';
+            void body.offsetHeight;
+            body.style.maxHeight = '';
+            body.classList.add('collapsed');
+        } else {
+            // 展开：钉住 0 为起点 → reflow → 过渡到实际高度，结束后解除内联
+            body.classList.remove('collapsed');
+            body.style.maxHeight = '0px';
+            void body.offsetHeight;
+            body.style.maxHeight = body.scrollHeight + 'px';
+            setTimeout(() => { body.style.maxHeight = ''; }, GROUP_BODY_ANIM_MS + 40);
+        }
     });
 
     if (preset.agents.length === 0) {
@@ -577,7 +581,7 @@ function revertOverride(preset, agent) {
  *   1) 更新方案自身 name；
  *   2) 同步所有 extends === 旧名 的其它方案（否则继承引用断裂）；
  *   3) 若改的是当前激活方案，activePresetName 一并跟随；
- *   保存由「💾 保存配置」统一提交（后端会按新名重建 presets 块）。
+ *   保存由「保存配置」统一提交（后端会按新名重建 presets 块）。
  */
 function renamePreset(preset) {
     const oldName = preset.name;
@@ -624,33 +628,41 @@ export function showAddEntryModal(presetName) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal">
-            <h3>添加条目 · ${esc(presetName)}</h3>
-            <div class="modal-field">
-                <label>Agent 名</label>
-                <select id="modalEntryKey" class="modal-select">
-                    <option value="">（选择内置 agent）</option>
-                    ${SLIM_AGENT_KEYS.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
-                    <option value="__custom__">自定义…</option>
-                </select>
-                <input id="modalEntryKeyCustom" placeholder="输入自定义 agent 名" style="display:none;margin-top:6px" />
+        <div class="modal modal-card proxy-modal">
+            <div class="modal-header">
+                <h3>添加条目 · ${escapeAttr(presetName)}</h3>
+                <button type="button" class="modal-close-btn" id="btnCloseAddEntry" title="关闭"><span class="oc-fb-icon oc-fb-icon-close" aria-hidden="true"></span></button>
             </div>
-            <div class="modal-field">
-                <label>模型</label>
-                <select id="modalEntryModel" class="modal-select">${modelOptionsHtml('')}</select>
+            <div class="modal-body">
+                <div class="modal-field">
+                    <label>Agent 名</label>
+                    <select id="modalEntryKey" class="modal-select">
+                        <option value="">（选择内置 agent）</option>
+                        ${SLIM_AGENT_KEYS.map(k => `<option value="${escapeAttr(k)}">${escapeAttr(k)}</option>`).join('')}
+                        <option value="__custom__">自定义…</option>
+                    </select>
+                    <input id="modalEntryKeyCustom" placeholder="输入自定义 agent 名" style="display:none;margin-top:6px" />
+                </div>
+                <div class="modal-field">
+                    <label>模型</label>
+                    <select id="modalEntryModel" class="modal-select">${modelOptionsHtml('')}</select>
+                </div>
+                <div class="modal-field">
+                    <label>variant（思考力度）</label>
+                    <select id="modalEntryVariant" class="modal-select">${variantOptionsHtml('')}</select>
+                </div>
             </div>
-            <div class="modal-field">
-                <label>variant（思考力度）</label>
-                <select id="modalEntryVariant" class="modal-select">${variantOptionsHtml('')}</select>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-cancel" id="btnCancelAddEntry">取消</button>
+            <div class="modal-footer">
+                <button class="btn-cancel" id="btnCancelAddEntry">取消</button>
                 <button class="btn btn-primary" id="btnConfirmAddEntry">确定</button>
             </div>
         </div>`;
     document.body.appendChild(overlay);
     // 点遮罩关闭（仅当按下与松开都在遮罩上才触发；新机制不再需要子元素 stopPropagation）
     bindOverlayClose(overlay, () => overlay.remove());
+
+    // 头部关闭按钮：移除当前弹窗
+    overlay.querySelector('#btnCloseAddEntry').addEventListener('click', () => overlay.remove());
 
     const keySelect = overlay.querySelector('#modalEntryKey');
     const keyCustom = overlay.querySelector('#modalEntryKeyCustom');
@@ -714,7 +726,7 @@ export function showAddPresetModal() {
                 <label>继承自</label>
                 <select id="modalPresetBase" class="modal-select">
                     <option value="">不继承</option>
-                    ${names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+                    ${names.map(n => `<option value="${escapeAttr(n)}">${escapeAttr(n)}</option>`).join('')}
                 </select>
             </div>
             <div class="modal-actions">
@@ -806,9 +818,11 @@ export async function handleSlimSave() {
     };
 
     const btn = document.getElementById('btnSaveModels');
+    const btnText = document.getElementById('btnSaveModelsText');
     if (btn) {
         btn.disabled = true;
-        btn.textContent = '⏳ 保存中...';
+        // 图标在按钮内独立 span，这里只改文字（保存中状态）
+        if (btnText) btnText.textContent = '保存中...';
     }
 
     try {
@@ -822,11 +836,11 @@ export async function handleSlimSave() {
         await loadModelConfig();
         showToast('已保存。若在运行中的 OpenCode 未生效：请重载（v1）或稍候自动刷新（v2）', 'success');
     } catch (err) {
-        showToast('保存失败: ' + (err.message || err) + '。文件可能已被外部修改，请点「🔄 刷新」后重试', 'error');
+        showToast('保存失败: ' + formatApiError(err) + '。文件可能已被外部修改，请点「🔄 刷新」后重试', 'error');
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = '💾 保存配置';
+            if (btnText) btnText.textContent = '保存配置';
         }
     }
 }

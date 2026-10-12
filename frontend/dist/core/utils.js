@@ -3,6 +3,7 @@
 // ============================================================
 
 import { store } from './state.js';
+import { formatApiError } from './v2compat.js';
 
 // DOM 快捷引用
 export const $ = (sel) => document.querySelector(sel);
@@ -21,12 +22,77 @@ export function showToast(message, type = 'info') {
     }, 2800);
 }
 
+/** 统一的 API 错误提示：prefix + formatApiError(e)，以 error 样式 toast 展示。
+ *  各模块 catch 中展示请求错误时统一调用，避免直接拼 e.message 丢掉
+ *  v2 错误体里可读的 message（解析逻辑见 core/v2compat.js 的 formatApiError）。 */
+export function showApiError(prefix, e) {
+    showToast((prefix || '') + formatApiError(e), 'error');
+}
+
 // HTML 转义
 export function escapeHtml(text) {
     if (text == null) return '';
     const div = document.createElement('div');
     div.textContent = String(text);
     return div.innerHTML;
+}
+
+/** HTML 属性值转义：在 escapeHtml 基础上补引号转义，用于 title="..." 等属性上下文 */
+export function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// 剪贴板
+/** 复制文本到剪贴板：优先 navigator.clipboard，不可用/失败时回退 execCommand。
+ *  成功 resolve；失败 reject（错误信息为可读文本）。 */
+export async function copyToClipboard(text) {
+    const value = String(text == null ? '' : text);
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(value);
+            return;
+        } catch (_) {
+            // 非安全上下文 / 权限被拒等情况继续走 execCommand 兜底
+        }
+    }
+    const input = document.createElement('input');
+    input.value = value;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    let ok = false;
+    try {
+        ok = document.execCommand('copy');
+    } finally {
+        document.body.removeChild(input);
+    }
+    if (!ok) throw new Error('复制失败');
+}
+
+// ============================
+// 弹窗遮罩关闭绑定
+// ============================
+
+/** 绑定「点击遮罩关闭」。
+ *
+ *  为什么不能用纯 click：click 事件的目标是 mousedown 与 mouseup 的**最近共同祖先**——
+ *  在弹窗内容里按下、拖到遮罩上再松开时，click 目标会是遮罩本身，导致误关闭
+ *  （在弹窗内拖选文本、拖拽时非常恼人）。这里记录 mousedown 的目标，
+ *  只有「按下与松开都发生在遮罩本身」才触发关闭。
+ */
+export function bindOverlayClose(modalEl, onClose) {
+    if (!modalEl || modalEl.dataset.overlayCloseBound) return;
+    modalEl.dataset.overlayCloseBound = '1';
+    let downOnOverlay = false;
+    modalEl.addEventListener('mousedown', (e) => {
+        downOnOverlay = e.target === modalEl;
+    });
+    modalEl.addEventListener('mouseup', (e) => {
+        const shouldClose = downOnOverlay && e.target === modalEl;
+        downOnOverlay = false;
+        if (shouldClose && typeof onClose === 'function') onClose();
+    });
 }
 
 // ============================
@@ -155,31 +221,6 @@ export function modelDisplayLabel(modelId) {
 }
 
 // ============================================================
-// 弹窗遮罩关闭绑定
-// ============================================================
-
-/** 绑定「点击遮罩关闭」。
- *
- *  为什么不能用纯 click：click 事件的目标是 mousedown 与 mouseup 的**最近共同祖先**——
- *  在弹窗内容里按下、拖到遮罩上再松开时，click 目标会是遮罩本身，导致误关闭
- *  （在弹窗内拖选文本、拖拽时非常恼人）。这里记录 mousedown 的目标，
- *  只有「按下与松开都发生在遮罩本身」才触发关闭。
- */
-export function bindOverlayClose(modalEl, onClose) {
-    if (!modalEl || modalEl.dataset.overlayCloseBound) return;
-    modalEl.dataset.overlayCloseBound = '1';
-    let downOnOverlay = false;
-    modalEl.addEventListener('mousedown', (e) => {
-        downOnOverlay = e.target === modalEl;
-    });
-    modalEl.addEventListener('mouseup', (e) => {
-        const shouldClose = downOnOverlay && e.target === modalEl;
-        downOnOverlay = false;
-        if (shouldClose && typeof onClose === 'function') onClose();
-    });
-}
-
-// ============================================================
 // 运行环境判定（Wails v3）
 // ============================================================
 
@@ -222,7 +263,8 @@ export function getTabMessagesEl(sessionID) {
 /** 取当前活动 tab 的消息容器；无活动 tab 时回退到池本身 */
 export function getActiveMessagesEl() {
     var pool = document.getElementById('ocMessagesPool');
-    if (!pool) return document.getElementById('ocMessages');
+    // 池不存在（页面结构异常）时返回 null；不再回退到已不存在的 #ocMessages
+    if (!pool) return null;
     var active = pool.querySelector('.oc-messages-tab.active');
     return active || pool;
 }
@@ -377,28 +419,52 @@ export function refreshServiceStatus() {
 }
 
 // ============================================================
-// 项目树当前会话高亮同步
-// 只依赖 store + DOM，不依赖 chat 层任何模块；
-// tabs.js / session.js / tree.js 均从 core 层 import，避免模块环。
+// MCP 状态判定（纯函数）
+// 从 service.js 下放到 core 层：service.js 的渲染与重试循环共用同一实现，
+// 且 Node 测试可直接导入（core 层无顶层 DOM 依赖）。
 // ============================================================
 
-/** 同步项目树中当前会话的高亮（active 类）。
- *  在 selectSession / switchTab / 树点击后调用，确保树节点与当前会话一致。 */
-export function updateTreeActiveSession() {
-    var container = document.getElementById('ocTree');
-    if (!container) return;
-    var activeId = store.activeTabId || store.currentSessionId || '';
-    container.querySelectorAll('.oc-tree-session').forEach(function(node) {
-        var isActive = !!activeId && node.dataset.sessionId === activeId;
-        node.classList.toggle('active', isActive);
-    });
+/** 从 /api/mcp 的服务器条目提取规范化状态字符串。
+ *  v2 形态：{ name, status: { status: 'connected'|'pending'|'disabled'|'failed'|'needs_auth', error? } }；
+ *  同时兼容把 status 直接写成字符串的简化形态，以及 status 为 null 的情况。 */
+export function mcpState(info) {
+    if (!info) return '';
+    const s = info.status;
+    return (s && typeof s === 'object') ? (s.status || '') : (s || '');
 }
+
+/** MCP/插件延迟重试循环的停止判定（纯函数，便于 Node 单测）。
+ *
+ *  继续重试（返回 false）的条件（满足任一即可）：
+ *   - MCP 列表为空：服务端 MCP 异步就绪，可能还没返回任何服务器；
+ *   - 任一服务器状态为 pending：stdio 子进程仍在连接中，稍后会转为 connected/failed；
+ *   - 插件列表为空：插件加载通常晚于 MCP。
+ *  停止（返回 true）的条件：MCP 非空、无 pending、插件非空（全部就绪），
+ *  或已超过尝试上限（防止服务端持续 pending 时无限轮询）。
+ *
+ *  注意：failed / needs_auth 是**终态**（不会自行恢复），不算 pending——
+ *  遇到它们应停止轮询，由用户手动点「重连」处理，避免无意义的持续请求。
+ *
+ *  @param {Array|Object|null} mcpList    /api/mcp 的服务器列表（数组或键值对象）
+ *  @param {Array|null} pluginList        /api/plugin 的用户插件列表
+ *  @param {number} attempt               当前已执行的尝试次数（从 1 开始）
+ *  @param {number} maxAttempts           允许的最大尝试次数
+ *  @returns {boolean} true=停止重试；false=继续重试
+ */
+export function mcpRetryShouldStop(mcpList, pluginList, attempt, maxAttempts) {
+    const list = Array.isArray(mcpList) ? mcpList : Object.values(mcpList || {});
+    const mcpEmpty = list.length === 0;
+    const mcpPending = list.some(function (i) { return mcpState(i) === 'pending'; });
+    const pluginEmpty = !(pluginList || []).length;
+    return (!mcpEmpty && !mcpPending && !pluginEmpty) || attempt > maxAttempts;
+}
+
 // ============================================================
 // 待办能力检测与面板刷新
 // 背景：OpenCode v2 移除了内置 todowrite 工具，改由配套插件
 // （plugins/manager-todo.ts，id = oc-manager.todo）提供 todo_write 工具。
 // 管理器根据「插件是否已加载」驱动右栏代办分区的显隐：
-// 插件在 -> 显示；未装 / 服务停止 -> 整块隐藏（避免恒空面板）。
+// 插件在 → 显示；未装 / 服务停止 → 整块隐藏（避免恒空面板）。
 // service.js 拿到插件列表后更新 store.todoSupported 并触发本刷新通道，
 // 渲染实现在 sidepanel.js（renderTodos）。
 // ============================================================
@@ -431,4 +497,93 @@ export function setTodoPanelRefreshHandler(fn) {
 /** 请求刷新待办面板（core 层入口，service.js 在插件状态更新后调用） */
 export function refreshTodoPanel() {
     if (todoPanelRefreshHandler) todoPanelRefreshHandler();
+}
+
+// ============================================================
+// 项目树当前会话高亮同步
+// 只依赖 store + DOM，不依赖 chat 层任何模块；
+// tabs.js / session.js / tree.js 均从 core 层 import，避免模块环。
+// ============================================================
+
+/** 同步项目树中当前会话的高亮（active 类）。
+ *  在 selectSession / switchTab / 树点击后调用，确保树节点与当前会话一致。 */
+export function updateTreeActiveSession() {
+    var container = document.getElementById('ocTree');
+    if (!container) return;
+    var activeId = store.activeTabId || store.currentSessionId || '';
+    container.querySelectorAll('.oc-tree-session').forEach(function(node) {
+        var isActive = !!activeId && node.dataset.sessionId === activeId;
+        node.classList.toggle('active', isActive);
+    });
+}
+// ============================================================
+// 会话动作注册中心
+// 打破 chat/session.js ↔ chat/events.js、chat/session.js ↔ chat/cmd-palette.js
+// 循环依赖：实现留在 session.js（本模块不 import 任何 chat 层文件），
+// 由它在模块加载时注册；events.js / cmd-palette.js 只从 core 层调用。
+// 时序说明：这些函数全部由 SSE 事件回调 / 用户交互触发（运行时调用），
+// session.js 作为 main.js 的静态依赖先于任何调用完成注册，无加载期立即调用。
+// ============================================================
+let sessionActionHandlers = null;
+
+/** 由 session.js 模块加载时注册实现对象 */
+export function setSessionActionHandlers(handlers) {
+    sessionActionHandlers = handlers || null;
+}
+
+/** 加载指定会话的消息（缺省当前会话；实现见 session.js） */
+export function loadMessages(sessionID) {
+    return sessionActionHandlers ? sessionActionHandlers.loadMessages(sessionID) : undefined;
+}
+
+/** 加载更早的消息（分页历史；实现见 session.js） */
+export function loadOlderMessages(sessionID) {
+    return sessionActionHandlers ? sessionActionHandlers.loadOlderMessages(sessionID) : undefined;
+}
+
+/** 该会话的消息是否已全部加载（分页；实现见 session.js，未注册时视为 false） */
+export function isSessionLoadedAll(sessionID) {
+    return !!(sessionActionHandlers && sessionActionHandlers.isSessionLoadedAll(sessionID));
+}
+
+/** 拉取并同步当前会话标题（实现见 session.js） */
+export function refreshSessionTitle() {
+    return sessionActionHandlers ? sessionActionHandlers.refreshSessionTitle() : undefined;
+}
+
+/** 选择/切换会话（实现见 session.js） */
+export function selectSession(id) {
+    return sessionActionHandlers ? sessionActionHandlers.selectSession(id) : undefined;
+}
+
+/** 加载 Agent/Model 下拉选择器（实现见 session.js） */
+export function loadAgentModelSelectors(dir, force) {
+    return sessionActionHandlers ? sessionActionHandlers.loadAgentModelSelectors(dir, force) : undefined;
+}
+
+/** 记录模型活动（无响应看门狗基线；实现见 session.js） */
+export function notePromptActivity(sessionID) {
+    return sessionActionHandlers ? sessionActionHandlers.notePromptActivity(sessionID) : undefined;
+}
+
+// ============================================================
+// 会话树动作注册中心
+// 打破 chat/events.js ↔ chat/tree.js 循环依赖：实现留在 tree.js，
+// 由它在模块加载时注册；events.js 只从 core 层调用。
+// ============================================================
+let treeActionHandlers = null;
+
+/** 由 tree.js 模块加载时注册实现对象 */
+export function setTreeActionHandlers(handlers) {
+    treeActionHandlers = handlers || null;
+}
+
+/** 构建会话树（实现见 tree.js；返回 Promise<boolean>） */
+export function buildTree() {
+    return treeActionHandlers ? treeActionHandlers.buildTree() : undefined;
+}
+
+/** 该会话是否刚被本地删除（实现见 tree.js，未注册时视为 false） */
+export function wasSessionDeletedLocally(id) {
+    return !!(treeActionHandlers && treeActionHandlers.wasSessionDeletedLocally(id));
 }

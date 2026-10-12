@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"oc-manager/internal/executil"
+	"oc-manager/internal/jsonutil"
 	"oc-manager/model"
 )
 
@@ -40,8 +41,12 @@ const (
 )
 
 var (
-	WebSess     *webSession
-	WebSessMu   sync.Mutex
+	WebSess   *webSession
+	WebSessMu sync.Mutex
+	// LastCfgHost / LastCfgPort 记录前端最近一次配置的服务地址。
+	// 由 lastCfgMu 保护：StartOpenCodeWeb / GetWebStatus 都会写入，
+	// 单独一把锁避免与 WebSessMu 交错加锁。
+	lastCfgMu   sync.Mutex
 	LastCfgHost = defaultHostname
 	LastCfgPort = defaultPort
 )
@@ -126,8 +131,10 @@ func StartOpenCodeWeb(port int, hostname string, password string, proxy model.Pr
 	if port <= 0 {
 		port = defaultPort
 	}
+	lastCfgMu.Lock()
 	LastCfgHost = hostname
 	LastCfgPort = port
+	lastCfgMu.Unlock()
 
 	// 1) 本会话已连接的服务
 	WebSessMu.Lock()
@@ -189,11 +196,31 @@ func StartOpenCodeWeb(port int, hostname string, password string, proxy model.Pr
 	return model.WebResult{Running: true, Success: true, URL: fmt.Sprintf("http://%s:%d", h, p), Health: health, Version: version}
 }
 
-// applyProxyToService 把代理设置写入共享服务的环境变量（best effort，不阻断启动）。
+// applyProxyToService 把代理设置同步到共享服务的环境变量（best effort，不阻断启动）。
+//
+// 启用与禁用两个方向都必须处理：env 写在服务配置里，服务每次启动都会加载。
+// 若只在「启用」时写入而不在「禁用」时清除，关掉代理后旧变量仍会残留，
+// 让 opencode 及它启动的所有 MCP 子进程继续去连一个可能不再监听的代理端口
+// （表现为 ConnectionRefused），而用户界面上的「代理开关」早已是关闭状态。
+//
+// 与 ensureServiceConfig 一致：先读当前配置做差异检测再调用 service set/unset，
+// 因为这两个命令会停掉正在运行的服务，值已正确就跳过。
 func applyProxyToService(proxy model.ProxyConfig) {
+	cur := readServiceConfig()
+	if cur == nil {
+		cur = &serviceConfig{}
+	}
+
 	if !proxy.ProxyEnabled {
+		// 关闭代理：清除此前可能写入的代理变量（仅在确实存在时调用，避免无谓的服务重启）
+		for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"} {
+			if _, exists := cur.Env[key]; exists {
+				_, _ = runOpencodeService("unset", "env", key)
+			}
+		}
 		return
 	}
+
 	host := strings.TrimSpace(proxy.ProxyHost)
 	proxyPort := strings.TrimSpace(proxy.ProxyPort)
 	if host == "" {
@@ -209,6 +236,9 @@ func applyProxyToService(proxy model.ProxyConfig) {
 		{"ALL_PROXY", proxyURL},
 		{"NO_PROXY", "localhost,127.0.0.1"},
 	} {
+		if cur.Env[kv[0]] == kv[1] {
+			continue // 值一致则跳过（service set 会重启服务）
+		}
 		_, _ = runOpencodeService("set", "env", kv[0], kv[1])
 	}
 }
@@ -233,6 +263,12 @@ func StopOpenCodeWeb() model.WebResult {
 
 // discoverOpenCodeServer 通过读取 V2 服务注册文件（state/service.json）发现运行中的服务，
 // 并用 /api/info 严格探活。返回 (hostname, port, password, ok)。
+//
+// 口令来源优先级：
+//  1. 注册文件 state/service.json 的口令（自启动服务的权威来源，由服务自身写入）；
+//  2. 用户手填口令 configuredPassword（外部启动 / 无注册文件场景的兜底）：
+//     仅当注册文件口令为空或探测失败，且手填口令非空并与注册文件口令不同时，
+//     才用手填口令再探测一次。
 func discoverOpenCodeServer() (string, int, string, bool) {
 	info := readServiceRegistration()
 	if info == nil || info.URL == "" {
@@ -244,6 +280,10 @@ func discoverOpenCodeServer() (string, int, string, bool) {
 	}
 	if probeOpenCodeHealth(h, p, info.Password) {
 		return h, p, info.Password, true
+	}
+	// 注册文件口令不可用：尝试用户手填口令（含注册文件口令为空的场景）
+	if pwd := configuredPassword(); pwd != "" && pwd != info.Password && probeOpenCodeHealth(h, p, pwd) {
+		return h, p, pwd, true
 	}
 	return "", 0, "", false
 }
@@ -272,8 +312,10 @@ func GetWebStatus(hostname string, port int) model.WebResult {
 	if port <= 0 {
 		port = defaultPort
 	}
+	lastCfgMu.Lock()
 	LastCfgHost = hostname
 	LastCfgPort = port
+	lastCfgMu.Unlock()
 
 	WebSessMu.Lock()
 	if WebSess != nil {
@@ -350,11 +392,6 @@ func isPortInUse(hostname string, port int) bool {
 	return true
 }
 
-// getOpenCodeHealth 探测服务健康状态（口令从注册文件获取）。
-func getOpenCodeHealth(hostname string, port int) (string, string, bool) {
-	return getOpenCodeHealthWithAuth(hostname, port, discoverServerPassword(hostname, port))
-}
-
 // getOpenCodeHealthWithAuth 探测 v2 的 /api/info 取版本号与存活状态。
 // v1 的 /global/health 在 v2 中不存在，v2 未注册的路径会回落到 SPA 首页并
 // 返回 200 + text/html，因此必须改用 /api/info 这种真实端点来判定。
@@ -379,9 +416,9 @@ func getOpenCodeHealthWithAuth(hostname string, port int, password string) (stri
 	if len(body) > 0 {
 		var payload map[string]interface{}
 		if err := json.Unmarshal(body, &payload); err == nil {
-			version = stringValue(payload["version"])
+			version = jsonutil.String(payload["version"])
 			if version == "" {
-				version = stringValue(payload["Version"])
+				version = jsonutil.String(payload["Version"])
 			}
 		}
 	}
@@ -422,16 +459,9 @@ func serviceHostPort(rawURL string) (string, int) {
 	return host, port
 }
 
-func stringValue(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case fmt.Stringer:
-		return v.String()
-	default:
-		return ""
-	}
-}
+// ============================================================================
+// V2 模型列表（前端模型选择器数据源）——合并后恢复
+// ============================================================================
 
 // 获取模型列表
 func GetModelList(baseURL, apiKey string) []string {

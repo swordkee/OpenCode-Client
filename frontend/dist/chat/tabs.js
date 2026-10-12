@@ -2,7 +2,7 @@
 // chat-tabs.js — 多会话 Tab 页管理
 // 依赖：core/state.js（openTabs, activeTabId, tabCacheVersion 等）、core/utils.js（escapeHtml, getTabMessagesEl, ensureTabMessagesEl）、
 //       chat/mobile.js（isMobileTreeMode）、chat/render.js（updateScrollBottomButton, updateSendButton）、
-//       chat/events.js（loadSessionStatuses）、chat/sidepanel.js（extractSubtaskSummaries, renderSubtaskPanel）、
+//       chat/events.js（loadSessionStatuses）、chat/sidepanel.js（refreshSubtaskPanel）、
 //       chat/search.js（resetUserNav, updateUserNav）
 //       filebrowser/browser.js（openFileBrowserStandaloneFor）——保留全局守卫调用
 // 解环说明：本文件不得 import chat/session.js。原 activateTabContainer 中 loadMessages() 调用
@@ -14,7 +14,7 @@ import { escapeHtml, getTabMessagesEl, ensureTabMessagesEl, getCachedMessages, u
 import { isMobileTreeMode } from './mobile.js';
 import { updateScrollBottomButton, updateSendButton } from './render.js';
 import { loadSessionStatuses } from './events.js';
-import { extractSubtaskSummaries, renderSubtaskPanel } from './sidepanel.js';
+import { refreshSubtaskPanel } from './sidepanel.js';
 import { resetUserNav, updateUserNav } from './search.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { updateTreeActiveSession } from '../core/utils.js';
@@ -153,16 +153,17 @@ export function switchTab(sessionID) {
     var title = '';
     var tabInfo = store.openTabs.find(function(t) { return t.sessionID === sessionID; });
     if (tabInfo) title = tabInfo.title;
-    var info = window._sessionMap && window._sessionMap[sessionID];
+    var info = store.sessionMap && store.sessionMap[sessionID];
     if (!title && info) title = info.title;
     if (title) document.getElementById('ocChatTitle').textContent = title;
 
     var dirEl = document.getElementById('ocSideDirPath');
-    if (dirEl) {
+    var dirBar = document.getElementById('ocDirBar');
+    if (dirEl && dirBar) {
         var dirPath = (info && info.directory) || '';
         dirEl.textContent = dirPath || sessionID;
         dirEl.title = dirPath || '';
-        dirEl.onclick = function() {
+        dirBar.onclick = function() {
             // 右侧面板会话目录：点击直接打开独立窗口（桌面端原生窗口 / Web 端新标签页）
             if (dirPath) openFileBrowserStandaloneFor(dirPath, { features: ['git'] });
         };
@@ -176,8 +177,8 @@ export function switchTab(sessionID) {
     resetUserNav();
     updateUserNav();
     if (!isMobileTreeMode()) {
-        extractSubtaskSummaries(sessionID);
-        renderSubtaskPanel();
+        // 子任务面板数据源为服务端 child sessions：切换 tab 后立即重拉一次
+        refreshSubtaskPanel();
     }
     loadSessionStatuses().then(function(statuses) {
         if (sessionID === store.currentSessionId) {

@@ -28,19 +28,25 @@ test("子任务判定不再写死 part.tool（改用 part.tool || part.name）",
     );
 });
 
-test("从 state.input 读取 agent/description/prompt（v2 位置）", () => {
-    assert.ok(src.includes("inp.agent"), "应从 state.input.agent 取 agent");
-    assert.ok(src.includes("inp.description"), "应从 state.input.description 取描述");
-    assert.ok(src.includes("inp.prompt"), "应从 state.input.prompt 取 prompt");
-    // v2 的 state.metadata 只有 {sessionID, status, truncated}
-    assert.ok(src.includes("meta.sessionID"), "子会话 id 需兼容 v2 的 metadata.sessionID");
-    assert.ok(src.includes("meta.sessionId"), "同时保留 v1 的 metadata.sessionId");
+// 上游 35ca995 重构：子任务卡片不再扫描消息缓存里的 task/subagent tool part
+//（打开会话只拉最近 20 条时面板恒空），改用会话列表字段作为数据源；
+// 描述/原始任务不再从 tool state.input 捕获，弹窗改放子会话消息流。
+test("子任务摘要取自会话列表字段（v2 新数据源）", () => {
+    assert.ok(src.includes("childSessionId"), "列表项须带 childSessionId（点击定位/弹窗都靠它）");
+    assert.ok(src.includes("s?.agent"), "agent 取自会话列表字段");
+    assert.ok(src.includes("providerID"), "模型取自 s.model.providerID");
 });
 
-test("模型标签保留父消息回退路径", () => {
-    assert.ok(src.includes("partMessageModel(part, msgById)"), "应保留父消息模型回退");
-    assert.ok(src.includes("msgById"), "回退依赖 messageID → 消息 索引");
-    assert.ok(src.includes("msgById.set(mid, msg)"), "应建立该索引");
+test("模型标签经 modelDisplayLabel 归一，缺省落 unknown", () => {
+    // providerID/modelID 成对才拼 modelRef；缺任一侧落 'unknown'，不显示半截标签
+    assert.ok(src.includes("modelDisplayLabel(modelRef)"), "模型标签经 modelDisplayLabel 归一");
+    assert.ok(src.includes("'unknown'"), "agent/model 缺省有 unknown 兜底");
+});
+
+test("描述与原始任务为空时对应行隐藏（不显示空占位行）", () => {
+    // 列表数据源下 description/promptPreview 恒为空串；弹窗须隐藏对应区块
+    assert.ok(/descRow\.style\.display = desc \? '' : 'none'/.test(src), "desc 空时隐藏描述行");
+    assert.ok(/promptCollapse\.style\.display = prompt \? '' : 'none'/.test(src), "prompt 空时隐藏原始任务折叠区");
 });
 
 // ===== 代办提取：todowrite 在 v2 被移除 =====
