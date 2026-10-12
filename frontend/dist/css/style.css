@@ -9262,3 +9262,242 @@ input.toolbar-input {
     font-size: 12px;
     line-height: 1.5;
 }
+
+/* ============================================================
+   会话统计 / 排队队列 / 本轮改动（官方 parity 批，2026-10-13）
+   ============================================================ */
+
+/* 导航图标：会话统计（与其它导航项同一套 mask 渲染方式） */
+.nav-item[data-view="view-stats"] .nav-icon {
+    -webkit-mask-image: url("../assets/统计.svg");
+    mask-image: url("../assets/统计.svg");
+}
+
+/* ---------- 排队队列条（输入区上方） ---------- */
+.oc-inbox-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--accent-ghost);
+    font-size: 12px;
+    color: var(--text-primary);
+}
+.oc-inbox-bar-icon { flex-shrink: 0; }
+.oc-inbox-bar-count { color: var(--accent); font-weight: 600; flex-shrink: 0; }
+.oc-inbox-bar-preview {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+
+/* ---------- 排队队列管理弹窗 ---------- */
+.oc-inbox-modal {
+    width: 560px;
+    max-width: 92vw;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+}
+.oc-inbox-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.oc-inbox-title { font-weight: 600; }
+.oc-inbox-body {
+    padding: 8px 14px;
+    overflow-y: auto;
+}
+.oc-inbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+}
+.oc-inbox-item:last-child { border-bottom: none; }
+.oc-inbox-item-type {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+}
+.oc-inbox-item-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.oc-inbox-item-delivery {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+.oc-inbox-item-delivery.is-steer { color: var(--accent); font-weight: 600; }
+.oc-inbox-item-actions { flex-shrink: 0; display: flex; gap: 6px; }
+.oc-inbox-cancel:hover { color: var(--danger, #e5484d); }
+
+/* ---------- 会话头部「改动」按钮 ---------- */
+.oc-chat-head-diff { flex-shrink: 0; }
+
+/* ---------- 本轮改动弹窗 ---------- */
+.oc-turn-diff-modal {
+    width: 720px;
+    max-width: 94vw;
+    max-height: 78vh;
+    display: flex;
+    flex-direction: column;
+}
+.oc-turn-diff-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.oc-turn-diff-title { font-weight: 600; }
+.oc-turn-diff-body {
+    padding: 8px 14px;
+    overflow-y: auto;
+}
+.oc-diff-file { border-bottom: 1px solid var(--border); padding: 4px 0; }
+.oc-diff-file:last-child { border-bottom: none; }
+.oc-diff-file-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.oc-diff-file-head:hover { background: var(--bg-card-hover); }
+.oc-diff-status {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+.oc-diff-status-added { background: rgba(46, 160, 67, 0.15); color: #3fb950; }
+.oc-diff-status-deleted { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+.oc-diff-status-modified { background: rgba(41, 151, 255, 0.12); color: var(--accent); }
+.oc-diff-file-path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl; /* 长路径省略头部，保留文件名可见 */
+    text-align: left;
+}
+.oc-diff-stat { flex-shrink: 0; font-family: monospace; }
+.oc-diff-add { color: #3fb950; }
+.oc-diff-del { color: #f85149; }
+.oc-diff-patch {
+    margin: 4px 0 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--bg-input);
+    overflow-x: auto;
+    font-size: 11px;
+    line-height: 1.5;
+}
+.oc-diff-line { display: block; white-space: pre; font-family: monospace; }
+.oc-diff-add { color: #3fb950; }
+.oc-diff-line.oc-diff-add { color: #3fb950; background: rgba(46, 160, 67, 0.08); }
+.oc-diff-line.oc-diff-del { color: #f85149; background: rgba(248, 81, 73, 0.08); }
+.oc-diff-line.oc-diff-hunk { color: var(--accent); }
+.oc-diff-line.oc-diff-meta { color: var(--text-secondary); }
+
+/* ---------- 会话统计视图 ---------- */
+.oc-stats-range {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 12px;
+}
+.oc-stats-body { padding: 12px 16px; overflow-y: auto; }
+.oc-stats-group {
+    margin: 14px 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.oc-stats-group:first-child { margin-top: 0; }
+.oc-stats-activity {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    min-height: 92px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-input);
+    overflow-x: auto;
+}
+.oc-stats-bar-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 18px;
+}
+.oc-stats-bar {
+    width: 100%;
+    max-width: 28px;
+    border-radius: 3px 3px 0 0;
+    background: var(--accent);
+    opacity: 0.85;
+}
+.oc-stats-bar-col:hover .oc-stats-bar { opacity: 1; }
+.oc-stats-bar-date {
+    font-size: 10px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.oc-stats-models {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.oc-stats-row {
+    display: grid;
+    grid-template-columns: 1fr 70px 90px 90px;
+    gap: 8px;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.oc-stats-row:last-child { border-bottom: none; }
+.oc-stats-row-head {
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.oc-stats-model {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+}
+.oc-stats-tools { font-size: 12px; }
+.oc-stats-tools-line {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-input);
+}

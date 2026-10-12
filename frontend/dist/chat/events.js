@@ -18,6 +18,7 @@ import { scheduleRenderCachedMessages, upsertMessage, upsertPart, applyPartDelta
 import { scheduleSubtaskExtraction } from './sidepanel.js';
 import { showPermissionRequest, closePermissionModal } from './permission.js';
 import { adaptEvent, normalizeStatuses } from '../core/v2compat.js';
+import { scheduleInboxRefresh } from './inbox.js';
 
 // ============================
 // SSE 事件处理
@@ -33,6 +34,11 @@ let reconnectAttempts = 0;
 function dispatchV2Event(v2event) {
     const v1events = adaptEvent(v2event);
     for (const e of v1events) handleOcEvent(e);
+    // inbox 生命周期事件（enqueued/delivered/updated…）：刷新队列条与管理弹窗。
+    // v2compat 已把 enqueued 合成用户消息显示进消息流，这里只管队列可见性（防抖合并）。
+    if (v2event && typeof v2event.type === 'string' && v2event.type.startsWith('session.inbox.')) {
+        scheduleInboxRefresh((v2event.data && v2event.data.sessionID) || store.currentSessionId);
+    }
     // 任何模型/agent 活动都说明本次发送没有石沉大海：刷新无响应看门狗的基线
     // （基线由 session.js 的发送流程维护，只认本次发送会话的事件，超时后才会提示）。
     if (isPromptActivityEvent(v2event && v2event.type)) {

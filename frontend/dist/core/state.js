@@ -29,6 +29,9 @@ export const store = {
     sessions: [],
     /** 会话状态映射表，key=会话ID，value='busy'|'idle' */
     sessionStatuses: {},
+    // 各会话的收件箱（排队消息）快照：{ [sessionID]: Session.Inbox.Info[] }
+    // 由 chat/inbox.js 的 loadInbox 维护；队列条与管理弹窗都读这里。
+    inboxItems: {},
     /** 会话错误信息映射表 */
     sessionErrors: {},
     /** 新建会话的待用工作目录（tree.js 写入，session.js 首次发送时读取） */

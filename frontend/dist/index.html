@@ -46,6 +46,11 @@
                 <span class="nav-icon" aria-hidden="true"></span>
                 <span class="nav-label">常用命令</span>
             </div>
+            <!-- 会话统计（experimental stats 端点：用量/成本/活跃/工具汇总） -->
+            <div class="nav-item" data-view="view-stats" title="会话统计">
+                <span class="nav-icon" aria-hidden="true"></span>
+                <span class="nav-label">会话统计</span>
+            </div>
             <!-- 左下角版本信息：展开态=图标+vX.Y.Z；折叠态=仅图标（版本号由 title 悬浮气泡显示） -->
             <div class="sidebar-version" id="sidebarVersion">
                 <span class="sidebar-version-icon" aria-hidden="true"></span>
@@ -103,6 +108,7 @@
                         <div class="oc-chat-head">
                             <button type="button" class="oc-chat-head-mobile-toggle" id="btnMobileTree" title="打开项目树">☰</button>
                             <span class="oc-chat-head-title" id="ocChatTitle">未选择会话</span>
+                            <button type="button" class="btn btn-sm btn-refresh oc-chat-head-diff" id="btnTurnDiff" title="查看本轮改动（最新一轮触碰的文件 diff）">改动</button>
                             <button type="button" class="btn btn-sm btn-refresh oc-chat-head-refresh" id="btnRefreshCurrentSession" title="刷新当前会话" aria-label="刷新当前会话">↻</button>
                         </div>
                         <div class="oc-search-bar" id="ocSearchBar" style="display:none">
@@ -170,6 +176,9 @@
                                     <button type="button" class="btn btn-sm" id="btnPermOnce">允许一次</button>
                                 </div>
                             </div>
+                            <!-- 排队队列条：会话忙时发送的消息（delivery=queue）停进服务端 inbox，
+                                 有排队项时显示，点击「管理」打开队列弹窗（chat/inbox.js） -->
+                            <div class="oc-inbox-bar" id="ocInboxBar" style="display:none"></div>
                             <div class="oc-input-wrap">
                                 <!-- 知识库引用区：textarea 内无法渲染胶囊，故引用以胶囊形式独立放在输入框上方 -->
                                 <div class="oc-refs hidden" id="ocRefs"></div>
@@ -413,7 +422,60 @@
             </div>
 
             <!-- ===== View 5: 供应商配置 ===== -->
-            <div class="view-panel" id="view-providers">
+            <!-- ===== View: 会话统计（experimental session stats，views/stats.js） ===== -->
+        <div class="view-panel" id="view-stats">
+            <section class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatSessions">0</span>
+                    <span class="stat-label">会话</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatSubagents">0</span>
+                    <span class="stat-label">子代理</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatPrompts">0</span>
+                    <span class="stat-label">提示词</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatSteps">0</span>
+                    <span class="stat-label">步骤</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatTokens">0</span>
+                    <span class="stat-label">Tokens</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatCost">$0.00</span>
+                    <span class="stat-label">成本</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatActiveDays">0</span>
+                    <span class="stat-label">活跃天</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="ocStatStreak">0</span>
+                    <span class="stat-label">连续天</span>
+                </div>
+                <div class="stats-spacer"></div>
+                <select id="ocStatsRange" class="oc-stats-range" title="统计范围">
+                    <option value="today">今天</option>
+                    <option value="7d" selected>近 7 天</option>
+                    <option value="30d">近 30 天</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-refresh" id="btnRefreshStats" title="刷新统计"><span class="oc-fb-icon oc-fb-icon-refresh"></span>刷新</button>
+            </section>
+            <div class="oc-stats-body">
+                <div class="oc-stats-group">每日活跃（步骤数）</div>
+                <div class="oc-stats-activity" id="ocStatsActivity"></div>
+                <div class="oc-stats-group">模型用量</div>
+                <div class="oc-stats-models" id="ocStatsModels"></div>
+                <div class="oc-stats-group">工具调用</div>
+                <div class="oc-stats-tools" id="ocStatsTools"></div>
+            </div>
+        </div>
+
+        <div class="view-panel" id="view-providers">
                 <section class="path-bar">
                     <span class="path-label">配置文件：</span>
                     <span class="path-value" id="providerConfigPath">加载中...</span>
@@ -429,6 +491,28 @@
 
     <!-- Toast 通知 -->
     <div class="toast" id="toast"></div>
+
+    <!-- 排队队列管理弹窗（chat/inbox.js：列出 inbox 条目，可插话/撤回） -->
+    <div class="modal-overlay" id="ocInboxModal" style="display:none">
+        <div class="modal oc-inbox-modal">
+            <div class="oc-inbox-header">
+                <span class="oc-inbox-title">排队队列</span>
+                <button type="button" class="btw-icon-btn oc-inbox-close" title="关闭">✕</button>
+            </div>
+            <div class="oc-inbox-body" id="ocInboxList"></div>
+        </div>
+    </div>
+
+    <!-- 本轮改动弹窗（chat/turn-diff.js：最新一轮的文件 diff 列表 + 补丁展开） -->
+    <div class="modal-overlay" id="ocTurnDiffModal" style="display:none">
+        <div class="modal oc-turn-diff-modal">
+            <div class="oc-turn-diff-header">
+                <span class="oc-turn-diff-title">本轮改动<span id="ocTurnDiffCount"></span></span>
+                <button type="button" class="btw-icon-btn oc-turn-diff-close" title="关闭">✕</button>
+            </div>
+            <div class="oc-turn-diff-body" id="ocTurnDiffList"></div>
+        </div>
+    </div>
 
     <!-- 从消息创建新会话（fork 弹窗） -->
     <div class="modal-overlay" id="forkModal" style="display:none">

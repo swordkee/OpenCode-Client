@@ -53,6 +53,9 @@ import { bindKnowledgeEvents } from './views/knowledge.js';
 import { loadProviders } from './views/provider.js';
 // 知识库 @ 引用：输入框输入 @ 弹出知识库搜索面板（需 DOM 就绪后显式初始化）
 import { initKnowledgeRef } from './chat/knowledge-ref.js';
+import { initInbox } from './chat/inbox.js';
+import { initTurnDiff } from './chat/turn-diff.js';
+import { initStats } from './views/stats.js';
 // 侧问面板（/btw）：事件绑定 + 全局声明式键位表（集中在这两个模块，不再散落监听）
 import { bindBtwPanelEvents } from './chat/btw.js';
 import { bindKeysHelpEvents } from './chat/keys-help.js';
@@ -213,6 +216,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 知识库 @ 引用：绑定输入框的 @ 检测与搜索面板（幂等）
     initKnowledgeRef();
+
+    // 排队消息管理（队列条 + 管理弹窗）、本轮改动视图、会话统计视图（均幂等）
+    initInbox();
+    initTurnDiff();
+    initStats();
 
     // 附件
     document.getElementById('btnAttachFile').addEventListener('click', () => {

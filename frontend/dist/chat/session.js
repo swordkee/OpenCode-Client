@@ -32,6 +32,7 @@ import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 // 知识库 @ 引用：collectKnowledgeRefs 取引用全文注入发送 parts，clearKnowledgeRefs 在发送成功后清空引用区。
 // 该模块不识 session.js，无循环依赖。
 import { collectKnowledgeRefs, clearKnowledgeRefs, hasKnowledgeRefs } from './knowledge-ref.js';
+import { loadInbox } from './inbox.js';
 // OpenCode v2 适配层：拆 {data:...} 信封、把 v2 扁平消息还原为 v1 的 {info,parts}、转换 prompt 请求体。
 import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, formatApiError } from '../core/v2compat.js';
 
@@ -403,6 +404,8 @@ export async function selectSession(id) {
     // 标记已读：v2 的 /api/session/{id}/view 用 time.idle 原值做对账凭据，
     // 缺了返回 400。失败只记日志，不阻断会话打开——已读是附加语义。
     markSessionViewed(id, info?.idle);
+    // 拉取该会话的排队队列（不阻塞打开；队列条据此显隐）
+    loadInbox(id);
     document.getElementById('ocChatTitle').textContent = info?.title || id;
     const dirEl = document.getElementById('ocSideDirPath');
     const dirBar = document.getElementById('ocDirBar');
@@ -1414,6 +1417,8 @@ export async function sendPrompt() {
             await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/prompt`, toPromptBody(body));
             if (body.delivery === 'queue') {
                 showToast('会话正忙，消息已排队（空闲后自动发送）', 'info');
+                // 立刻刷新队列条，让「排队中」可见（事件流随后也会触发防抖刷新）
+                loadInbox(sid);
             }
         }
         // 发送成功：启动无响应看门狗——20s 内既无流式输出也无失败事件时提示（见 armPromptWatch）

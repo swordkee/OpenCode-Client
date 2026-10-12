@@ -12,6 +12,7 @@ import { loadModelConfig } from '../views/omo-config.js';
 import { loadSkillsData } from '../views/skill-manager.js';
 import { loadKnowledgeView } from '../views/knowledge.js';
 import { loadCommands } from '../views/commands.js';
+import { loadStatsView } from '../views/stats.js';
 
 export function switchView(viewId) {
     // 更新导航项高亮
@@ -34,6 +35,9 @@ export function switchView(viewId) {
         loadKnowledgeView();
     } else if (viewId === 'view-commands') {
         loadCommands();
+    } else if (viewId === 'view-stats') {
+        // 会话统计：切到时按当前范围拉取（experimental 端点，防御式渲染）
+        loadStatsView();
     } else if (viewId === 'view-opencode') {
         // 检查 web 状态
         checkWebStatus();
