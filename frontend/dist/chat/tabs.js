@@ -17,7 +17,7 @@ import { loadSessionStatuses } from './events.js';
 import { refreshSubtaskPanel } from './sidepanel.js';
 import { resetUserNav, updateUserNav } from './search.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
-import { updateTreeActiveSession } from '../core/utils.js';
+import { updateTreeActiveSession, updateTreeSessionActivity } from '../core/utils.js';
 import { stashComposerDraft, restoreComposerDraft, clearComposer, suppressNextStash } from './composer-drafts.js';
 import { renderInboxBar, loadInbox } from './inbox.js';
 
@@ -194,6 +194,8 @@ export function switchTab(sessionID) {
             // （SSE 增量更新），避免整体替换抹掉其它 tab 刚写入的 busy 状态
             if (statuses && typeof statuses === 'object' && statuses[sessionID] !== undefined) {
                 store.sessionStatuses[sessionID] = statuses[sessionID];
+                // 树活动动画同步
+                updateTreeSessionActivity();
             }
             updateSendButton();
         }

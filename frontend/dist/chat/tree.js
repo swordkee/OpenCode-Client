@@ -12,7 +12,7 @@
 
 import { api } from '../core/apicall.js';
 import { store, currentDir } from '../core/state.js';
-import { escapeHtml, showToast, showApiError, setMessagesEmpty, isBrowserRuntimeForMain, updateModelInfo, updateTreeActiveSession, setTreeActionHandlers } from '../core/utils.js';
+import { escapeHtml, showToast, showApiError, setMessagesEmpty, isBrowserRuntimeForMain, updateModelInfo, updateTreeActiveSession, updateTreeSessionActivity, setTreeActionHandlers } from '../core/utils.js';
 // 相对时间格式化统一走 core/format.js
 import { formatRelativeTime } from '../core/format.js';
 import { isMobileTreeMode, closeMobileTree } from './mobile.js';
@@ -168,9 +168,11 @@ export function renderTree(tree) {
             const updatedAt = ses.updatedAt || '';
             const sesDir = ses.directory || dir.title;
             store.sessionMap[ses.id] = { title: ses.title, directory: sesDir, updatedAt: updatedAt };
-            // 会话卡片：图标 + 标题 + 相对时间 + 删除按钮；active 由 updateTreeActiveSession 维护
-            html += `<div class="oc-tree-node oc-tree-session" data-session-id="${escapeHtml(ses.id)}">`;
-            html += `<div class="oc-tree-indent"></div><span class="oc-tree-session-icon">💬</span><span class="oc-tree-label" title="${escapeHtml(ses.title+'\n📂 '+sesDir+'\n⏰ '+updatedAt)}">${escapeHtml(ses.title)}</span>`;
+            // 会话卡片：图标（运行中带活动角标）+ 标题 + 相对时间 + 删除按钮；
+            // active 由 updateTreeActiveSession 维护，is-busy 由 updateTreeSessionActivity 维护
+            const isBusy = store.sessionStatuses && store.sessionStatuses[ses.id] === 'busy';
+            html += `<div class="oc-tree-node oc-tree-session${isBusy ? ' is-busy' : ''}" data-session-id="${escapeHtml(ses.id)}">`;
+            html += `<div class="oc-tree-indent"></div><span class="oc-tree-session-icon">💬<span class="oc-tree-activity" aria-hidden="true"></span></span><span class="oc-tree-label" title="${escapeHtml(ses.title+'\n📂 '+sesDir+'\n⏰ '+updatedAt)}">${escapeHtml(ses.title)}</span>`;
             if (updatedAt) html += `<span class="oc-tree-session-time">${escapeHtml(formatRelativeTime(updatedAt))}</span>`;
             html += `<div class="oc-tree-tooltip"><div class="oc-tree-tooltip-title">${escapeHtml(ses.title)}</div><div class="oc-tree-tooltip-row">📂 ${escapeHtml(sesDir)}</div><div class="oc-tree-tooltip-row">⏰ ${escapeHtml(updatedAt)}</div></div>`;
             html += `<button class="oc-tree-del" data-del-id="${escapeHtml(ses.id)}" title="删除会话">✕</button>`;
@@ -261,6 +263,10 @@ export function renderTree(tree) {
     });
 
     applyTreeSearchFilter();
+
+    // innerHTML 重建会清掉节点上的所有状态类：重挂选中高亮与运行中活动动画
+    updateTreeActiveSession();
+    updateTreeSessionActivity();
 }
 
 export function updateTreeSearchStatus(matchCount, totalCount) {

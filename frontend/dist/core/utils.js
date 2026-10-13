@@ -516,6 +516,19 @@ export function updateTreeActiveSession() {
         node.classList.toggle('active', isActive);
     });
 }
+
+/** 同步项目树中各会话的「运行中」活动动画标记（is-busy 类）。
+ *  数据源 store.sessionStatuses（v1 契约 'busy'|'idle'）。调用时机：
+ *  renderTree 重渲染后、SSE session.status/session.idle 写入后、状态轮询写入后。
+ *  与 updateTreeActiveSession（选中高亮）相互独立，两类可叠加。 */
+export function updateTreeSessionActivity() {
+    var container = document.getElementById('ocTree');
+    if (!container) return;
+    var statuses = store.sessionStatuses || {};
+    container.querySelectorAll('.oc-tree-session').forEach(function(node) {
+        node.classList.toggle('is-busy', statuses[node.dataset.sessionId] === 'busy');
+    });
+}
 // ============================================================
 // 会话动作注册中心
 // 打破 chat/session.js ↔ chat/events.js、chat/session.js ↔ chat/cmd-palette.js

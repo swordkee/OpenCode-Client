@@ -1983,6 +1983,7 @@ input::placeholder, textarea::placeholder {
     margin-right: 6px;
     font-size: 12px;
     opacity: 0.8;
+    position: relative;
 }
 .oc-tree-session-time {
     flex-shrink: 0;
@@ -2015,6 +2016,34 @@ input::placeholder, textarea::placeholder {
 .oc-tree-session.active .oc-tree-label {
     color: var(--accent);
     font-weight: 600;
+}
+/* ── 运行中会话的活动动画（2026-10-13 用户要求：树里在活动的会话要有动效，
+   与右侧面板的运行状态观感一致）：图标角标脉动点 + 卡片呼吸光 ── */
+.oc-tree-activity {
+    display: none;
+    position: absolute;
+    top: -3px;
+    right: -5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+.oc-tree-session.is-busy .oc-tree-activity {
+    display: block;
+    animation: ocTreeActivityPulse 1.2s ease-in-out infinite;
+}
+@keyframes ocTreeActivityPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.5); opacity: 0.45; }
+}
+.oc-tree-session.is-busy {
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    animation: ocTreeBusyGlow 1.6s ease-in-out infinite;
+}
+@keyframes ocTreeBusyGlow {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+    50% { box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 22%, transparent); }
 }
 /* 删除按钮：hover 时浮现 */
 .oc-tree-del {

@@ -15,7 +15,7 @@
 
 import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
-import { showToast, showApiError, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, isKnownAgentName, isKnownModelId, resolveKnownValue, markManualSelection, restoreSessionSelection, hasManualSessionSelection, setSessionActionHandlers } from '../core/utils.js';
+import { showToast, showApiError, escapeHtml, getActiveMessagesEl, ensureTabMessagesEl, getCachedMessages, updateTreeActiveSession, updateTreeSessionActivity, isKnownAgentName, isKnownModelId, resolveKnownValue, markManualSelection, restoreSessionSelection, hasManualSessionSelection, setSessionActionHandlers } from '../core/utils.js';
 import { isMobileTreeMode } from './mobile.js';
 import { openSessionTab, renderTabsBar, setTabActivationHandler } from './tabs.js';
 import { refreshSubtaskPanel, scheduleSubtaskExtraction } from './sidepanel.js';
@@ -1117,6 +1117,8 @@ export function scheduleRefresh() {
             // 其它会话的 key 保留本地值（SSE 增量权威），避免整体替换抹掉其它 tab 的 busy
             if (nextStatuses[refreshSessionId] !== undefined) {
                 store.sessionStatuses[refreshSessionId] = nextStatuses[refreshSessionId];
+                // 树活动动画同步（轮询是 SSE 丢事件的纠偏通道，也要驱动）
+                updateTreeSessionActivity();
             }
             updateSendButton();
             const busy = isSessionBusy(refreshSessionId);

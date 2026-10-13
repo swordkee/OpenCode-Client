@@ -12,7 +12,7 @@
 
 import { store, currentDir } from '../core/state.js';
 import { api } from '../core/apicall.js';
-import { showToast, escapeHtml, getCachedMessages, safeText, isDesktopRuntime, loadWailsRuntime, refreshServiceStatus, loadMessages, refreshSessionTitle, selectSession, loadAgentModelSelectors, notePromptActivity, buildTree, wasSessionDeletedLocally } from '../core/utils.js';
+import { showToast, escapeHtml, getCachedMessages, safeText, isDesktopRuntime, loadWailsRuntime, refreshServiceStatus, loadMessages, refreshSessionTitle, selectSession, loadAgentModelSelectors, notePromptActivity, buildTree, wasSessionDeletedLocally, updateTreeSessionActivity } from '../core/utils.js';
 import { updateSendButton } from './render.js';
 import { scheduleRenderCachedMessages, upsertMessage, upsertPart, applyPartDelta, removePart, removeMessage } from './cache.js';
 import { scheduleSubtaskExtraction } from './sidepanel.js';
@@ -231,6 +231,8 @@ export function handleOcEvent(event) {
         // v1 的 status 是字符串（'busy'/'idle'）；v2 可能是 {type:'running'}，
         // 统一交给 normalizeStatuses 归一，避免 isSessionBusy 认不出 running。
         store.sessionStatuses[sid] = normalizeStatuses({ [sid]: props.status || props })[sid];
+        // 树活动动画：busy/idle 变化即刻反映到左侧会话树
+        updateTreeSessionActivity();
         if (sid === store.currentSessionId) {
             updateSendButton();
             const status = props.status || props;
@@ -249,6 +251,8 @@ export function handleOcEvent(event) {
     if (type === 'session.idle' && sid) {
         delete store.sessionErrors[sid];
         store.sessionStatuses[sid] = 'idle';
+        // 树活动动画：busy/idle 变化即刻反映到左侧会话树
+        updateTreeSessionActivity();
         if (sid === store.currentSessionId) {
             updateSendButton();
             loadMessages();
