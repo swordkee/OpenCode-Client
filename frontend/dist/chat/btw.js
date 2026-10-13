@@ -20,7 +20,7 @@ import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
 import { showToast, escapeHtml, bindOverlayClose } from '../core/utils.js';
 import { buildBtwPrompt, extractBtwAnswer, btwPanelState } from '../core/btw.js';
-import { sanitizeMarkedHtml } from './render.js';
+import { sanitizeMarkedHtml } from '../core/sanitize.js';
 
 /** 面板状态（一问一答，故只保留一份）。 */
 const btwState = {
