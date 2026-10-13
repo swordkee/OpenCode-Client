@@ -119,7 +119,7 @@ test("events.js 监听 session.inbox.* 并防抖刷新队列", () => {
 });
 
 test("session.js 选会话与入队后都刷新队列", () => {
-    assert.ok(sessionSrc.includes("import { loadInbox } from './inbox.js'"), "应导入 loadInbox");
+    assert.ok(/import\s*{[^}]*\bloadInbox\b[^}]*}\s*from\s*'\.\/inbox\.js'/.test(sessionSrc), "应导入 loadInbox");
     assert.ok(/markSessionViewed\(id, info\?\.idle\);\s*\r?\n\s*\/\/[^\n]*\r?\n\s*loadInbox\(id\)/.test(sessionSrc),
         "selectSession 标记已读后应拉队列");
 });

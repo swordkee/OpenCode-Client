@@ -33,7 +33,7 @@ import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 // 该模块不识 session.js，无循环依赖。
 import { collectKnowledgeRefs, clearKnowledgeRefs, hasKnowledgeRefs } from './knowledge-ref.js';
 import { stashComposerDraft, restoreComposerDraft } from './composer-drafts.js';
-import { loadInbox } from './inbox.js';
+import { loadInbox, renderInboxBar } from './inbox.js';
 // OpenCode v2 适配层：拆 {data:...} 信封、把 v2 扁平消息还原为 v1 的 {info,parts}、转换 prompt 请求体。
 import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, formatApiError } from '../core/v2compat.js';
 
@@ -393,6 +393,8 @@ export async function selectSession(id) {
     store.activeTabId = id;
     // 草稿隔离：恢复该会话自己的输入框草稿
     restoreComposerDraft();
+    // 队列条立即按该会话缓存重渲染（无缓存即隐藏）；下文 loadInbox(id) 负责拉新
+    renderInboxBar();
     // 切会话：重置历史同步守卫，并按该会话自己的选择上下文恢复——
     // 有手动标记用标记值（手动选择优先于历史），无标记则清空等待本会话历史
     // 同步一次。避免把上一个会话的选择带进新会话，也避免历史回填覆盖手选项。

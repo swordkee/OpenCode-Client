@@ -22,6 +22,7 @@ import { resetUserNav } from './search.js';
 import { openProjectConfig } from '../views/project-config.js';
 import { openDirBrowserModal } from '../filebrowser/dir.js';
 import { stashComposerDraft, restoreComposerDraft } from './composer-drafts.js';
+import { renderInboxBar } from './inbox.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { createBuildGate, createRecentlyDeleted, RECENTLY_DELETED_TTL_MS } from './tree-guard.js';
 
@@ -490,6 +491,8 @@ export async function createNewSession(dir) {
         // 草稿隔离：进入新建态前，把输入框内容存回旧上下文（某会话或另一个 new:）
         stashComposerDraft();
         store.currentSessionId = '';
+        // 队列条隐藏（新建态无所属会话，绝不留上一会话的横幅）
+        renderInboxBar();
         store.activeTabId = '';   // 不再指向旧 tab
         store.sessionStatuses = {};
         store.sessionErrors = {};

@@ -19,6 +19,7 @@ import { resetUserNav, updateUserNav } from './search.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { updateTreeActiveSession } from '../core/utils.js';
 import { stashComposerDraft, restoreComposerDraft, clearComposer, suppressNextStash } from './composer-drafts.js';
+import { renderInboxBar, loadInbox } from './inbox.js';
 
 /**
  * 会话激活时的加载回调（由 session.js 通过 setTabActivationHandler 注入）。
@@ -138,6 +139,10 @@ export function switchTab(sessionID) {
     store.activeTabId = sessionID;
     store.currentSessionId = sessionID;
     restoreComposerDraft();
+    // 队列条跟随会话：先按该会话缓存重渲染（无缓存即隐藏，绝不留上一会话的横幅），
+    // 再异步拉新（loadInbox 到达后若仍是当前会话会自行重渲染）
+    renderInboxBar();
+    loadInbox(sessionID);
     // 切到该会话目录：刷新服务状态面板的 MCP/插件（按 location[directory] 作用域）
     refreshServiceStatus();
     activateTabContainer(sessionID);
@@ -226,6 +231,8 @@ export function closeSessionTab(sessionID) {
         } else {
             // 无剩余 tab：进入新建态，恢复 new: 草稿
             restoreComposerDraft();
+            // 队列条一并隐藏（新建态无所属会话）
+            renderInboxBar();
             document.getElementById('ocChatTitle').textContent = '未选择会话';
             var pool = document.getElementById('ocMessagesPool');
             if (pool) {
