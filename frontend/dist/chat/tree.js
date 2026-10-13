@@ -21,6 +21,7 @@ import { closeSessionTab, renderTabsBar } from './tabs.js';
 import { resetUserNav } from './search.js';
 import { openProjectConfig } from '../views/project-config.js';
 import { openDirBrowserModal } from '../filebrowser/dir.js';
+import { stashComposerDraft, restoreComposerDraft } from './composer-drafts.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { createBuildGate, createRecentlyDeleted, RECENTLY_DELETED_TTL_MS } from './tree-guard.js';
 
@@ -486,6 +487,8 @@ export async function createNewSession(dir) {
         if (isMobileTreeMode()) {
             closeMobileTree();
         }
+        // 草稿隔离：进入新建态前，把输入框内容存回旧上下文（某会话或另一个 new:）
+        stashComposerDraft();
         store.currentSessionId = '';
         store.activeTabId = '';   // 不再指向旧 tab
         store.sessionStatuses = {};
@@ -514,7 +517,8 @@ export async function createNewSession(dir) {
         renderTabsBar();
         // 重置用户消息导航索引（旧会话的定位索引不再适用）
         resetUserNav();
-        document.getElementById('ocPrompt').value = '';
+        // 恢复该待用目录的新建态草稿（无则清空），取代原来的直接 value=''
+        restoreComposerDraft();
         document.getElementById('ocPrompt').focus();
     } catch (e) {
         showApiError('选择目录失败: ', e);

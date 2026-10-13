@@ -32,6 +32,7 @@ import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 // 知识库 @ 引用：collectKnowledgeRefs 取引用全文注入发送 parts，clearKnowledgeRefs 在发送成功后清空引用区。
 // 该模块不识 session.js，无循环依赖。
 import { collectKnowledgeRefs, clearKnowledgeRefs, hasKnowledgeRefs } from './knowledge-ref.js';
+import { stashComposerDraft, restoreComposerDraft } from './composer-drafts.js';
 import { loadInbox } from './inbox.js';
 // OpenCode v2 适配层：拆 {data:...} 信封、把 v2 扁平消息还原为 v1 的 {info,parts}、转换 prompt 请求体。
 import { unwrap, unwrapList, toModelOptions, MODEL_LIST_EMPTY_HINT, adaptMessages, nextCursor, toPromptBody, toModelRef, formatApiError } from '../core/v2compat.js';
@@ -377,6 +378,9 @@ async function markSessionViewed(sessionId, idle) {
 /** 选择/切换会话：更新标题、目录路径，加载消息和子任务 */
 export async function selectSession(id) {
     if (!id) return;
+    // 草稿隔离：切走前先把输入框内容存到旧上下文（已打开 tab 的早退分支
+    // 由 switchTab 再 stash 一次同值，无害）
+    stashComposerDraft();
     var info = store.sessionMap?.[id];
     // 已打开的 Tab：走 Tab 快速切换（保存快照 + 秒切/分帧渲染）
     if (store.openTabs.some(function(t) { return t.sessionID === id; })) {
@@ -387,6 +391,8 @@ export async function selectSession(id) {
     openSessionTab(id, info?.title);
     store.currentSessionId = id;
     store.activeTabId = id;
+    // 草稿隔离：恢复该会话自己的输入框草稿
+    restoreComposerDraft();
     // 切会话：重置历史同步守卫，并按该会话自己的选择上下文恢复——
     // 有手动标记用标记值（手动选择优先于历史），无标记则清空等待本会话历史
     // 同步一次。避免把上一个会话的选择带进新会话，也避免历史回填覆盖手选项。

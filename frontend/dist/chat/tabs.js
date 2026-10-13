@@ -18,6 +18,7 @@ import { refreshSubtaskPanel } from './sidepanel.js';
 import { resetUserNav, updateUserNav } from './search.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { updateTreeActiveSession } from '../core/utils.js';
+import { stashComposerDraft, restoreComposerDraft, clearComposer, suppressNextStash } from './composer-drafts.js';
 
 /**
  * 会话激活时的加载回调（由 session.js 通过 setTabActivationHandler 注入）。
@@ -133,8 +134,10 @@ export function activateTabContainer(sessionID) {
 /** 切换活动 Tab（多容器方案）：纯 display 显隐，各容器内容已实时渲染，切换零成本 */
 export function switchTab(sessionID) {
     if (!sessionID) return;
+    stashComposerDraft();
     store.activeTabId = sessionID;
     store.currentSessionId = sessionID;
+    restoreComposerDraft();
     // 切到该会话目录：刷新服务状态面板的 MCP/插件（按 location[directory] 作用域）
     refreshServiceStatus();
     activateTabContainer(sessionID);
@@ -211,11 +214,18 @@ export function closeSessionTab(sessionID) {
 
     if (store.activeTabId === sessionID) {
         var next = store.openTabs[store.openTabs.length - 1];
+        // 草稿隔离：输入框文本归属被关 tab，先存到它的 key；
+        // 随后清空输入框并吞掉 switchTab 入口的连锁 stash（否则空文本会误删 new: 草稿）
+        stashComposerDraft();
+        clearComposer();
+        suppressNextStash();
         store.activeTabId = '';
         store.currentSessionId = '';
         if (next) {
             switchTab(next.sessionID);
         } else {
+            // 无剩余 tab：进入新建态，恢复 new: 草稿
+            restoreComposerDraft();
             document.getElementById('ocChatTitle').textContent = '未选择会话';
             var pool = document.getElementById('ocMessagesPool');
             if (pool) {

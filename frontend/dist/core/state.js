@@ -36,6 +36,9 @@ export const store = {
     sessionErrors: {},
     /** 新建会话的待用工作目录（tree.js 写入，session.js 首次发送时读取） */
     pendingWorkDir: '',
+    /** 输入框草稿（按上下文隔离）：key=ses:<会话ID> 或 new:<待用目录>，value=文本。
+     *  由 chat/composer-drafts.js 在会话切换/新建态切换时存取。 */
+    composerDrafts: {},
     /** 会话信息映射表：key=会话ID，value={ title, directory, updatedAt }。
      *  原为挂载在 window 上的全局会话映射，现收敛到 store；由 tree.js 重建树时写入，
      *  session.js / tabs.js / views/knowledge.js / currentDir 读取。 */
