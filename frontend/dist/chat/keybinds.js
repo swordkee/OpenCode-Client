@@ -6,7 +6,10 @@
 //      纯匹配逻辑在 core/keybinds.js（无 import，可 Node 单测）。
 //   2. **不得劫持输入框内已有按键**：事件 target 落在 input/textarea/select/
 //      contenteditable 里时整表让位——命令面板的 ↑↓/Enter/Tab/Esc、搜索的
-//      Ctrl+F、发送的 Enter 都免受影响。
+//      Ctrl+F、发送的 Enter 都免受影响。**例外**：条目标记 `inInput:true` 的
+//      键位在输入框内同样放行（前提：该键在 textarea 无原生语义，如 ctrl+b）——
+//      聊天界面焦点几乎恒在输入框，不放行等于死键（2026-10-13 用户报告
+//      「C+B 界面没有任何提示」的根因）。
 //   3. 有弹窗打开时整表让位（复用 .modal-overlay display:flex 的既有判据），
 //      避免「弹窗开着却触发背后的切换会话」。
 //   4. 无对应服务端端点的项一律**不实现**，不造假 UI（见文件末「未实现清单」）。
@@ -22,7 +25,7 @@
 import { api } from '../core/apicall.js';
 import { store } from '../core/state.js';
 import { showToast, markManualSelection } from '../core/utils.js';
-import { parseKeybind, eventMatchesStep, isEditableTarget, hasOpenModal, isMacPlatform, formatKeybind, isMacPlatformNow } from '../core/keybinds.js';
+import { parseKeybind, eventMatchesStep, isEditableTarget, hasOpenModal, isMacPlatform, formatKeybind, isMacPlatformNow, keybindAllowedInContext } from '../core/keybinds.js';
 import { createNewSession } from './tree.js';
 import { toggleSessions, toggleSidepanel } from './mobile.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
@@ -220,7 +223,8 @@ function navigateMessage(dir) {
 export const KEYBINDS = [
     { id: 'palette.open', title: '命令面板', spec: 'mod+k,mod+shift+p', run: openCmdPaletteByKeybind },
     { id: 'session.new', title: '新会话', spec: 'mod+shift+s', run: newSession },
-    { id: 'session.background', title: '移到后台', spec: 'ctrl+b', run: backgroundSession },
+    // inInput：ctrl+b 在 textarea 无原生语义，且输入框几乎恒为焦点，不放行即死键
+    { id: 'session.background', title: '移到后台', spec: 'ctrl+b', run: backgroundSession, inInput: true },
     { id: 'input.focus', title: '聚焦输入框', spec: 'ctrl+l', run: focusPromptInput },
     { id: 'file.open', title: '打开文件', spec: 'mod+p', run: openFile },
     { id: 'fileTree.toggle', title: '文件树开关', spec: 'mod+\\', run: toggleFileTree },
@@ -238,7 +242,7 @@ export const KEYBINDS = [
 
 /** 预解析：避免每次按键都重新 parse 字符串（匹配是热路径）。 */
 const COMPILED = KEYBINDS.map(function (item) {
-    return { id: item.id, title: item.title, run: item.run, steps: parseKeybind(item.spec) };
+    return { id: item.id, title: item.title, run: item.run, inInput: !!item.inInput, steps: parseKeybind(item.spec) };
 });
 
 /** 当前等待第二步（及以后）的序列：{ entry, index, timer } */
@@ -254,23 +258,25 @@ function clearSequence() {
  * 全局键位监听。整表共此一个监听，散落监听一律不再新增。
  *
  * 让位顺序（任一命中即整表不响应）：
- *   1. 事件 target 在可输入元素里 → 让位给输入框自己的按键（Enter/Ctrl+F/Esc/↑↓/Tab）
- *   2. 有弹窗打开 → 让位给弹窗自己的按键
+ *   1. 有弹窗打开 → 让位给弹窗自己的按键
+ *   2. 事件 target 在可输入元素里 → 只放行标记 inInput 的条目
+ *      （keybindAllowedInContext；Enter/Ctrl+F/Esc/↑↓/Tab 等输入框自有按键不受影响）
  */
 function onKeydown(event) {
     if (event.defaultPrevented || event.repeat) return;
-    if (isEditableTarget(event.target)) return;
     if (hasOpenModal(document)) {
         clearSequence();
         return;
     }
+    const editable = isEditableTarget(event.target);
     const mac = currentMac();
 
     // 先看是不是在等第二步
     if (sequence) {
         const entry = sequence.entry;
         const idx = sequence.index;
-        if (idx < entry.steps.length && eventMatchesStep(event, entry.steps[idx], mac)) {
+        if (keybindAllowedInContext(entry, editable)
+            && idx < entry.steps.length && eventMatchesStep(event, entry.steps[idx], mac)) {
             const isLast = idx === entry.steps.length - 1;
             if (isLast) {
                 const run = entry.run;
@@ -286,13 +292,14 @@ function onKeydown(event) {
             event.stopPropagation();
             return;
         }
-        // 没接上：清掉旧进度，按下面流程从第一步重新匹配
+        // 没接上（或焦点进了输入框、该条目不放行）：清掉旧进度，按下面流程从第一步重新匹配
         clearSequence();
     }
 
     for (let i = 0; i < COMPILED.length; i++) {
         const entry = COMPILED[i];
         if (!entry.steps.length) continue;
+        if (!keybindAllowedInContext(entry, editable)) continue;
         if (!eventMatchesStep(event, entry.steps[0], mac)) continue;
         if (entry.steps.length === 1) {
             event.preventDefault();

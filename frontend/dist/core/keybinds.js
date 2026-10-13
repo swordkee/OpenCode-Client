@@ -132,6 +132,16 @@ export function isEditableTarget(target) {
 }
 
 /**
+ * 键位条目在当前焦点上下文是否允许触发（纯函数，供单测）。
+ * 输入框内默认整表让位（不抢 Enter/Ctrl+F/↑↓ 等输入框自有按键），
+ * 但显式标记 inInput 的条目放行——前提是该键在 textarea 里无原生语义
+ * （如 ctrl+b 移到后台：聊天界面焦点几乎恒在输入框，不放行等于死键）。
+ */
+export function keybindAllowedInContext(entry, editable) {
+    return !editable || !!(entry && entry.inInput);
+}
+
+/**
  * 把键位 spec 渲染成给人看的标签。
  *
  * spec 里 `mod` 是平台无关写法（对齐官方）：Windows/Linux 显示 Ctrl、

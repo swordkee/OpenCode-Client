@@ -17,7 +17,7 @@ import {
 } from "../frontend/dist/core/btw.js";
 import {
     parseKeybind, parseKeybindStep, stepMatches, isEditableTarget,
-    isMacPlatform, hasOpenModal, formatKeybind,
+    isMacPlatform, hasOpenModal, formatKeybind, keybindAllowedInContext,
 } from "../frontend/dist/core/keybinds.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -294,6 +294,33 @@ test("键位表在输入框内整体让位（target 判据已接进 chat/keybind
     assert.ok(src.includes("hasOpenModal(document)"), "监听里必须判弹窗打开");
     // 全表只有一个 keydown 监听：不允许再散落
     assert.equal((src.match(/document\.addEventListener\('keydown'/g) || []).length, 1);
+});
+
+// ============ inInput 放行（2026-10-13：C+B 在输入框聚焦时是死键的修复） ============
+
+test("keybindAllowedInContext：输入框内只放行标记 inInput 的条目", () => {
+    assert.equal(keybindAllowedInContext({ inInput: true }, true), true, "标记条目在输入框内放行");
+    assert.equal(keybindAllowedInContext({ inInput: true }, false), true, "标记条目在输入框外照常");
+    assert.equal(keybindAllowedInContext({}, true), false, "未标记条目在输入框内让位");
+    assert.equal(keybindAllowedInContext({}, false), true, "未标记条目在输入框外照常");
+    assert.equal(keybindAllowedInContext(null, true), false, "空条目视同未标记");
+});
+
+test("session.background（ctrl+b）标记 inInput——聊天界面焦点恒在输入框，不标记即死键", () => {
+    const src = read(path.join("chat", "keybinds.js"));
+    const m = src.match(/\{\s*id:\s*'session\.background'[^}]+\}/);
+    assert.ok(m, "键位表里要有 session.background 条目");
+    assert.ok(/spec:\s*'ctrl\+b'/.test(m[0]), "session.background 键位应为 ctrl+b（与上游一致）");
+    assert.ok(/inInput:\s*true/.test(m[0]), "session.background 必须标记 inInput: true");
+});
+
+test("onKeydown 的匹配路径按 keybindAllowedInContext 过滤（首步与序列续接都过闸）", () => {
+    const src = read(path.join("chat", "keybinds.js"));
+    // 首步循环与序列续接两处都要过 keybindAllowedInContext，且不再有整表早退
+    const gates = src.match(/keybindAllowedInContext\(entry, editable\)/g) || [];
+    assert.ok(gates.length >= 2, "首步循环与序列续接都应调用 keybindAllowedInContext(entry, editable)");
+    assert.ok(!/if\s*\(isEditableTarget\(event\.target\)\)\s*return;/.test(src),
+        "不得恢复「输入框内整表早退」");
 });
 
 test("/btw 已接进命令面板与发送路径", () => {
