@@ -72,3 +72,32 @@ export function clearComposer() {
     const el = promptEl();
     if (el) el.value = '';
 }
+
+/**
+ * 跨窗口消费检测（2026-10-13 用户报告：「提交到队列后切到别的窗口，输入框还有刚才的问题」）。
+ * 多窗口（Wails 应用 + 浏览器前端）各有独立输入框 DOM：一个窗口发送/入队只清自己的，
+ * 其它窗口同会话的输入框里留着同一段文字。SSE 把新用户消息广播给所有客户端，
+ * 由本函数判定「这段文字已在别处被消费」：
+ *   - 正在查看该会话且输入框内容与消息文本逐字相同 → 清输入框；
+ *   - 该会话存稿与消息文本逐字相同 → 删存稿（防切回时复活）；
+ *   - 内容不同 → 一律保留（防误杀本窗口正在输入的新内容）。
+ * 发送方窗口自身也会收到 SSE 回执，但其输入框已清空、匹配不上，天然 no-op。
+ * @returns {boolean} 是否发生了清理
+ */
+export function consumeComposerIfMatches(sessionID, text) {
+    const t = (text || '').trim();
+    if (!sessionID || !t) return false;
+    let consumed = false;
+    const el = promptEl();
+    if (store.currentSessionId === sessionID && el && el.value.trim() === t) {
+        el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        consumed = true;
+    }
+    const key = draftKeyFor(sessionID, '');
+    if ((store.composerDrafts[key] || '').trim() === t) {
+        delete store.composerDrafts[key];
+        consumed = true;
+    }
+    return consumed;
+}

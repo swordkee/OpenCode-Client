@@ -19,6 +19,7 @@ import { scheduleSubtaskExtraction } from './sidepanel.js';
 import { showPermissionRequest, closePermissionModal } from './permission.js';
 import { adaptEvent, normalizeStatuses } from '../core/v2compat.js';
 import { scheduleInboxRefresh } from './inbox.js';
+import { consumeComposerIfMatches } from './composer-drafts.js';
 
 // ============================
 // SSE 事件处理
@@ -258,6 +259,13 @@ export function handleOcEvent(event) {
 
     if (type === 'message.updated' && props.info) {
         upsertMessage(props.info);
+        // 跨窗口消费检测（part 先于 info 到达的顺序）：用户消息的文本 part 已在缓存里，
+        // 逐字匹配则清本窗口该会话的输入框/存稿
+        if (props.info.role === 'user') {
+            const msg = getCachedMessages(props.info.sessionID).find(item => (item.info?.id || item.id) === props.info.id);
+            const text = (msg?.parts || []).filter(p => p?.type === 'text').map(p => p.text || '').join('');
+            consumeComposerIfMatches(props.info.sessionID, text);
+        }
         bumpTabCacheVersion(sid);
         scheduleRenderCachedMessages(sid);
         scheduleSubtaskExtraction(sid);
@@ -265,6 +273,13 @@ export function handleOcEvent(event) {
     }
     if (type === 'message.part.updated' && props.part) {
         upsertPart(props.part);
+        // 跨窗口消费检测（info 先于 part 到达的顺序）：role 已在缓存里可查
+        if (props.part.type === 'text') {
+            const msg = getCachedMessages(props.part.sessionID).find(item => (item.info?.id || item.id) === props.part.messageID);
+            if ((msg?.info?.role || msg?.role) === 'user') {
+                consumeComposerIfMatches(props.part.sessionID, props.part.text);
+            }
+        }
         bumpTabCacheVersion(sid);
         scheduleRenderCachedMessages(sid);
         scheduleSubtaskExtraction(sid);

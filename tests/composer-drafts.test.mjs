@@ -27,6 +27,7 @@ const { store } = await import('../frontend/dist/core/state.js');
 const {
     draftKeyFor, applyDraft, currentDraftKey,
     stashComposerDraft, restoreComposerDraft, clearComposer, suppressNextStash,
+    consumeComposerIfMatches,
 } = await import('../frontend/dist/chat/composer-drafts.js');
 
 beforeEach(() => {
@@ -136,4 +137,60 @@ test('currentDraftKey 跟随 store 上下文', () => {
     store.currentSessionId = '';
     store.pendingWorkDir = '/proj';
     assert.equal(currentDraftKey(), 'new:/proj');
+});
+
+// ---------- 跨窗口消费检测（consumeComposerIfMatches） ----------
+// 判例：Wails 应用 + 浏览器各持一份输入框 DOM，窗口 1 入队/发送后，
+// 窗口 2 同会话的输入框仍留同文（用户报告「切到别的窗口还有刚才的问题」）。
+// SSE 新用户消息到达时逐字匹配 → 清；不同文 → 保留。
+
+test('消费检测：当前会话输入框同文 → 清空 + 派发 input', () => {
+    switchTo('A', '/d1');
+    fakeTa.value = '刚才的问题';
+    fakeTa.dispatched = [];
+    const consumed = consumeComposerIfMatches('A', '刚才的问题');
+    assert.equal(consumed, true);
+    assert.equal(fakeTa.value, '');
+    assert.deepEqual(fakeTa.dispatched, ['input']);
+});
+
+test('消费检测：输入框不同文 → 保留（防误杀正在输入的新内容）', () => {
+    switchTo('A', '/d1');
+    fakeTa.value = '正在输入的新内容';
+    const consumed = consumeComposerIfMatches('A', '刚才的问题');
+    assert.equal(consumed, false);
+    assert.equal(fakeTa.value, '正在输入的新内容');
+});
+
+test('消费检测：非当前会话的同文存稿 → 删存稿，当前输入框不动', () => {
+    // 在 A 输入后切到 B（A 存稿留下，B 输入框里有别的内容）
+    switchTo('A', '/d1');
+    fakeTa.value = '刚才的问题';
+    switchTo('B', '/d1');
+    fakeTa.value = 'B 的内容';
+    const consumed = consumeComposerIfMatches('A', '刚才的问题');
+    assert.equal(consumed, true, 'A 的同文存稿应被消费');
+    assert.ok(!('ses:A' in store.composerDrafts));
+    assert.equal(fakeTa.value, 'B 的内容', 'B 的输入框不受影响');
+    // 切回 A：存稿已删，不再复活
+    switchTo('A', '/d1');
+    assert.equal(fakeTa.value, '');
+});
+
+test('消费检测：空文本一律不动', () => {
+    switchTo('A', '/d1');
+    fakeTa.value = '内容';
+    assert.equal(consumeComposerIfMatches('A', ''), false);
+    assert.equal(consumeComposerIfMatches('A', '   '), false);
+    assert.equal(consumeComposerIfMatches('', '内容'), false);
+    assert.equal(fakeTa.value, '内容');
+});
+
+test('消费检测：发送方窗口自身收到 SSE 回执是 no-op（输入框已清、无同文存稿）', () => {
+    switchTo('A', '/d1');
+    fakeTa.value = '刚才的问题';
+    // 模拟发送：L1242 清空输入框（不触碰存稿——此处本就没有存稿）
+    fakeTa.value = '';
+    const consumed = consumeComposerIfMatches('A', '刚才的问题');
+    assert.equal(consumed, false, '发送方窗口无可消费对象');
 });
