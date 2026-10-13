@@ -103,14 +103,23 @@ export function persistFrontendWebConfigFromInputs() {
     return saveFrontendWebConfig({ host, port });
 }
 
-/** 复制页面 Web 服务访问地址到剪贴板 */
+/** 复制页面 Web 服务访问地址到剪贴板。
+ *  运行中复制实际生效地址；未运行时回退到与二维码一致的预览地址
+ * （监听地址已是局域网 IP 直接可用，否则探测本机局域网 IP），
+ *  避免「二维码有地址、复制却不可用」的体验断裂（2026-10-13 用户报告）。 */
 export async function copyFrontendWebUrl() {
-    if (!store.frontendWebURL) {
+    let url = store.frontendWebURL || '';
+    if (!url) {
+        const host = (document.getElementById('frontendWebHost')?.value || '').trim();
+        const port = (document.getElementById('frontendWebPort')?.value || '').trim();
+        url = await resolveFrontendWebQrUrl(host, port);
+    }
+    if (!url) {
         showToast('当前没有可复制的访问地址', 'warning');
         return;
     }
     try {
-        await copyToClipboard(store.frontendWebURL);
+        await copyToClipboard(url);
         showToast('访问地址已复制', 'success');
     } catch (e) {
         showApiError('复制失败: ', e);
@@ -303,7 +312,9 @@ export function renderFrontendWebStatus() {
         btnToggle.classList.add('btn-primary');
         btnToggle.classList.remove('btn-danger-outline');
     }
-    btnCopy.disabled = !store.frontendWebURL;
+    // 复制按钮恒可用：未运行时 copyFrontendWebUrl 会回退到二维码同款预览地址，
+    // 实在无地址时点击给出提示，比禁用按钮更可解释
+    btnCopy.disabled = false;
     toolbarDot.classList.toggle('on', store.frontendWebRunning);
     toolbarDot.classList.toggle('off', !store.frontendWebRunning);
     btnToolbar.title = store.frontendWebRunning && store.frontendWebURL ? `Web服务运行中: ${store.frontendWebURL}` : 'Web服务';

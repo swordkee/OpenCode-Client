@@ -110,6 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnProxySettings').addEventListener('click', showProxyModal);
     document.getElementById('btnFrontendWebConfig').addEventListener('click', showFrontendWebModal);
     document.getElementById('btnToggleFrontendWeb').addEventListener('click', toggleFrontendWeb);
+    // 复制访问地址（2026-10-13 修复：此按钮此前从未绑定事件，纯死按钮）
+    document.getElementById('btnCopyFrontendWebUrl').addEventListener('click', copyFrontendWebUrl);
     document.getElementById('btnCloseFrontendWebHead').addEventListener('click', closeFrontendWebModal);
     document.getElementById('btnCloseProxyHead').addEventListener('click', hideProxyModal);
     ['frontendWebHost', 'frontendWebPort'].forEach(id => {
