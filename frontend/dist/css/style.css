@@ -365,6 +365,26 @@ input::placeholder, textarea::placeholder {
     flex-shrink: 0;
 }
 
+/* 「⏏ 后台运行」按钮：挂在在飞助手消息与等待占位上（2026-10-13 用户要求——
+   手机端没有 Ctrl，触屏可达入口；与 Ctrl+B 键位同一动作） */
+.oc-bg-run-btn {
+    margin-top: 6px;
+    cursor: pointer;
+    color: var(--accent);
+    background: var(--accent-ghost);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.oc-bg-run-btn:hover {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.oc-pending-actions {
+    margin-top: 8px;
+}
+.oc-pending-actions .oc-bg-run-btn {
+    margin-top: 0;
+}
+
 .btn-sm:hover:not(:disabled) {
     background: var(--bg-card-hover);
     color: var(--accent);

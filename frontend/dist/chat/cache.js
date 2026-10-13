@@ -317,10 +317,12 @@ export function ensurePendingAssistant(sessionID) {
     });
 }
 
-/** 渲染等待助手回复的占位提示 */
+/** 渲染等待助手回复的占位提示（带「⏏ 后台运行」按钮，手机端可达入口，main.js 事件委托触发） */
 export function renderPendingAssistantPlaceholder(sessionID) {
 	if (!sessionID || sessionID !== store.currentSessionId) return;
 	const box = getTabMessagesEl(sessionID);
 	if (!box) return;
-	box.innerHTML = '<div class="oc-empty">正在等待模型回复...</div>';
+	box.innerHTML = '<div class="oc-empty">正在等待模型回复...</div>'
+		+ '<div class="oc-pending-actions"><button type="button" class="btn btn-sm oc-bg-run-btn"'
+		+ ' title="把阻塞中的工具移到后台运行（同 Ctrl+B）">⏏ 后台运行</button></div>';
 }

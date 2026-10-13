@@ -26,6 +26,7 @@ import {
 } from './chat/service.js';
 import { refreshTree, createNewSession } from './chat/tree.js';
 import { isSessionBusy, scrollMessagesToBottom, updateScrollBottomButton } from './chat/render.js';
+import { backgroundSession } from './chat/background.js';
 import { respondPermission } from './chat/permission.js';
 import {
     sendPrompt, abortSession, addAttachment, refreshCurrentSession, scheduleRefresh,
@@ -471,6 +472,16 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBtwPanelEvents();
     bindKeysHelpEvents();
     initKeybinds();
+
+    // 「⏏ 后台运行」按钮：在飞助手消息/等待占位上动态渲染（随 SSE 重建），
+    // 用事件委托一次绑定；与 Ctrl+B 键位共用 chat/background.js 的同一动作。
+    // 手机端没有 Ctrl，这是触屏可达入口（2026-10-13 用户要求）。
+    document.addEventListener('click', (e) => {
+        const bgBtn = e.target.closest('.oc-bg-run-btn');
+        if (!bgBtn) return;
+        e.preventDefault();
+        backgroundSession();
+    });
 
     // ============ 独立文件浏览器窗口模式 ============
     // 桌面端多窗口 / 浏览器新标签页通过 ?view=filebrowser&root=...&git=1 进入：

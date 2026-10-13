@@ -31,7 +31,7 @@ import { toggleSessions, toggleSidepanel } from './mobile.js';
 import { openFileBrowserStandaloneFor } from '../filebrowser/browser.js';
 import { navigateUserMessage } from './search.js';
 import { closeSessionTab } from './tabs.js';
-import { isSessionBusy } from './render.js';
+import { backgroundSession } from './background.js';
 import { openCmdPaletteByKeybind } from './cmd-palette.js';
 
 /** 序列匹配的超时（ms）：超时后重新从第一步开始，避免上一次按了一半的残留误触发。 */
@@ -106,30 +106,9 @@ function closeCurrentTab() {
 }
 
 /**
- * 把会话的阻塞中工具移到后台观察（上游 session.background，键位 ctrl+b）。
- *
- * 端点已实测存在：POST /api/session/{id}/background → 204 No Content，
- * 语义（服务端自述）是「Move active foreground backgroundable tools for this
- * session into background observation. Idle requests are a no-op.」——
- * 会话空闲时是空操作，因此这里只在会话繁忙时才提示，避免做成一个假按钮。
+ * 移到后台（上游 session.background，键位 ctrl+b）——实现已抽到
+ * chat/background.js，与界面上的「⏏ 后台运行」按钮共用同一动作。
  */
-async function backgroundSession() {
-    const sid = store.currentSessionId;
-    if (!sid) {
-        showToast('请先选择会话', 'error');
-        return;
-    }
-    if (!isSessionBusy(sid)) {
-        showToast('当前会话没有在后台运行的工具', 'info');
-        return;
-    }
-    try {
-        await api.OpenCodeCall('POST', `/api/session/${encodeURIComponent(sid)}/background`, {});
-        showToast('已将会话中的阻塞工具移到后台', 'success');
-    } catch (e) {
-        showToast('移到后台失败: ' + (e && e.message ? e.message : e), 'error');
-    }
-}
 
 /** 在选项列表里按方向取下一个值（循环）。返回空串表示无可选项。 */
 function cycleValue(list, current, dir) {

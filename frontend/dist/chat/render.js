@@ -222,6 +222,17 @@ export function buildMessageNode(item) {
         pre.textContent = safeText(item);
         body.appendChild(pre);
     }
+    // 在飞助手消息（未完成 + 会话忙）：挂「⏏ 后台运行」按钮——手机端没有 Ctrl，
+    // 界面按钮与 Ctrl+B 键位共用 chat/background.js 的同一动作（main.js 事件委托触发）。
+    // 流式期间该消息随 SSE 反复重渲染，按钮随之重建，无需单独维护生命周期。
+    if (role === 'assistant' && !info.time?.completed && isSessionBusy(store.currentSessionId)) {
+        const bgBtn = document.createElement('button');
+        bgBtn.type = 'button';
+        bgBtn.className = 'btn btn-sm oc-bg-run-btn';
+        bgBtn.textContent = '⏏ 后台运行';
+        bgBtn.title = '把阻塞中的工具移到后台运行（同 Ctrl+B）';
+        body.appendChild(bgBtn);
+    }
     node.appendChild(body);
     // 输出卡片：显示 agent / model 信息
     if (role === 'assistant' && (info.agent || info.modelID || (info.model && info.model.modelID))) {
