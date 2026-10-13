@@ -452,6 +452,12 @@ func serviceHostPort(rawURL string) (string, int) {
 	if !ok {
 		return "", 0
 	}
+	// 注册文件记录的是监听地址；0.0.0.0 作为拨号目标在 Windows 上会被直接拒绝
+	// （unspecified address cannot be used as a target），归一化为回环再探测。
+	// 这是合并上游「注册文件即权威」时丢掉的 isUnspecifiedHost 语义的最小回补。
+	if host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 {
 		return "", 0

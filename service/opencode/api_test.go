@@ -408,3 +408,31 @@ func TestReadServiceRegistrationCorrupt(t *testing.T) {
 		t.Errorf("损坏文件应返回 nil，实际 %+v", got)
 	}
 }
+
+// TestServiceHostPort_UnspecifiedNormalizesToLoopback 锁定回归：
+// 注册文件 url 为监听地址 http://0.0.0.0:<port>（service 模式即如此），
+// 0.0.0.0 在 Windows 上不是合法拨号目标，必须归一化为 127.0.0.1 再探测，
+// 否则 discoverOpenCodeServer 恒失败、前端报「连不到 opencode」。
+func TestServiceHostPort_UnspecifiedNormalizesToLoopback(t *testing.T) {
+	cases := []struct {
+		name     string
+		rawURL   string
+		wantHost string
+		wantPort int
+	}{
+		{"unspecified_v4_normalizes", "http://0.0.0.0:49374", "127.0.0.1", 49374},
+		{"loopback_unchanged", "http://127.0.0.1:4096", "127.0.0.1", 4096},
+		{"lan_addr_unchanged", "http://192.168.0.104:49374", "192.168.0.104", 49374},
+		{"https_scheme", "https://0.0.0.0:8080/", "127.0.0.1", 8080},
+		{"no_port_rejected", "http://0.0.0.0", "", 0},
+		{"garbage_rejected", "not-a-url", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host, port := serviceHostPort(tc.rawURL)
+			if host != tc.wantHost || port != tc.wantPort {
+				t.Errorf("serviceHostPort(%q) = (%q, %d), 期望 (%q, %d)", tc.rawURL, host, port, tc.wantHost, tc.wantPort)
+			}
+		})
+	}
+}
