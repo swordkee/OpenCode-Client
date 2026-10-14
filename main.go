@@ -4,6 +4,7 @@ import (
 	"embed"
 
 	"oc-manager/internal/logger"
+	"oc-manager/internal/portable"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -16,11 +17,14 @@ func main() {
 	logger.CreateSysLog()
 	defer logger.Log.Close()
 
-	// 便携数据目录（自定义 opencode 数据/配置位置）：默认关闭，显式开启后才把
-	// 5 个 XDG 变量指向程序目录下的 agentdatas。开关判定见 portable.go 的
-	// portableModeEnabled。必须早于任何「读取 XDG 环境变量 / 启动 opencode
-	// 子进程」的逻辑。
-	setupPortableXDG()
+	// 便携数据目录：业务代码通过 portable helper 定位，子进程用 portable.ChildEnvFrom() 注入。
+	// 刻意不改进程级 XDG 环境变量——否则 libibus 找不到 ~/.config/ibus/bus，
+	// GTK/WebView 里的中文等输入法会整体失效。
+	// 开关语义（我方裁决保留）：默认关闭，OC_MANAGER_PORTABLE > 程序目录
+	// portable.json，见 internal/portable 的 Enabled。
+	if err := portable.Init(); err != nil {
+		logger.Printf("[portable] 便携数据目录初始化失败: %v", err)
+	}
 
 	// 先创建业务 App 实例，再交给 v3 注册为 Service。
 	// v3 应用实例在 application.New 之后回注给业务 App（事件/对话框/浏览器需要）。
